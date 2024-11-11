@@ -1,0 +1,81 @@
+[project]
+name = "flaxfit"
+version = "0.0.0"
+readme = "README.md"
+license = {file = "LICENSE"}
+
+dependencies = [
+    "jax>=0.4.0",
+    "jaxtyping>=0.2.20",
+    "flax",
+    "einshape",
+    "batchix @ git+https://github.com/JeyRunner/batchix"
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pylint ~=2.14.0",
+    "yapf ~=0.32.0",
+    "pylint",
+    "coverage",
+    "ruff",
+    "pre-commit"
+]
+test = [
+    "pytest",
+    "pytest-cov ~=3.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/JeyRunner/flaxfit"
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["flaxfit/*"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+
+[tool.ruff]
+extend-include = []
+src = []
+indent-width = 4
+
+[tool.ruff.format]
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+
+
+[tool.pylint]
+max-line-length = 120
+disable = [
+    "C0103", # (invalid-name)
+    "C0114", # (missing-module-docstring)
+    #"C0115", # (missing-class-docstring)
+    #"C0116", # (missing-function-docstring)
+    # "R0903", # (too-few-public-methods)
+    "R0913", # (too-many-arguments)
+    "W0105", # (pointless-string-statement)
+]
+
+[tool.yapf]
+blank_line_before_nested_class_or_def = true
+column_limit = 88
+
+
+[tool.pytest.ini_options]
+addopts = "--jaxtyping-packages=equinox,beartype.beartype(conf=beartype.BeartypeConf(strategy=beartype.BeartypeStrategy.On))"
+
+[tool.pyright]
+include = ["flaxfit", "tests"]
