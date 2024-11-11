@@ -12,12 +12,13 @@ from flaxfit.train_state import TrainState
 rngs = nnx.Rngs(0)
 model = nnx.Sequential(
     nnx.Linear(in_features=1, out_features=10, rngs=rngs),
+    nnx.relu,
     nnx.Linear(in_features=10, out_features=1, rngs=rngs),
 )
 
 def loss(predictions_y, dataset: Dataset):
     return dict(
-        mse=jnp.mean((predictions_y - dataset.x)**2)
+        mse=jnp.mean((predictions_y - dataset.y)**2)
     )
 
 def epoch_callback(
@@ -36,13 +37,13 @@ fitter = FlaxModelFitter(
 )
 
 # dataset
-x = jnp.arange(20)[:, jnp.newaxis]
+x = jnp.arange(20)[:, jnp.newaxis]/20.0
 gen_data = lambda x: x**2
 dataset = DatasetXY(
     x=x,
     y=x**2
 )
-x_eval = jnp.arange(20)[:, jnp.newaxis]
+x_eval = jnp.arange(30)[:, jnp.newaxis]/20.0
 dataset_eval = DatasetXY(
     x=x_eval,
     y=x_eval**2

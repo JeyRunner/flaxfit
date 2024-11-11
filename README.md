@@ -11,33 +11,38 @@ pip install git+https://github.com/JeyRunner/flaxfit.git
 ### Fit to dataset
 For full examples see `examples/` folder.
 ```python
-from flax.nnx import nnx
+from flax import nnx
 # ...
 
 rngs = nnx.Rngs(0)
 model = nnx.Sequential(
     nnx.Linear(in_features=1, out_features=10, rngs=rngs),
+    nnx.relu,
     nnx.Linear(in_features=10, out_features=1, rngs=rngs),
 )
 
+
 def loss(predictions_y, dataset: Dataset):
     return dict(
-        mse=jnp.mean((predictions_y - dataset.x)**2)
+        mse=jnp.mean((predictions_y - dataset.y)**2)
     )
 
+# epoch callback (executed on host)
 def callback(epoch: int, metrics: dict):
     print(f'> epoch {epoch} - {metrics}')
 
-fitter = FlaxModelFitter(
-    loss_function=loss,
-    update_batch_size=5
-)
 
 # dataset
 x = jnp.arange(20)[:, jnp.newaxis]
 dataset = DatasetXY(
     x=x,
     y=x**2
+)
+
+# setup fitter
+fitter = FlaxModelFitter(
+    loss_function=loss,
+    update_batch_size=5
 )
 
 # fit
