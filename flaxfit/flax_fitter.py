@@ -61,7 +61,7 @@ class FlaxModelFitter(ModelFitter):
 
 
     @staticmethod
-    def create_train_state(model: nnx.Module, optimizer=optax.adam(learning_rate=0.0002)) -> TrainState:
+    def create_train_state(model: nnx.Module, optimizer=optax.adam(learning_rate=0.0002)) -> TrainStateFlax:
         """
         Creates an initial train state.
         """

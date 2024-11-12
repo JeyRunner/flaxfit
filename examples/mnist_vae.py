@@ -299,7 +299,7 @@ fitter.train_fit(
     dataset=DatasetXY(x=train_images, y=train_images),
     dataset_eval=DatasetXY(x=test_images, y=test_images),
     num_epochs=2000,
-    evaluate_each_n_epochs=1,#20,
+    evaluate_each_n_epochs=20,
     epoch_callback_fn=epoch_callback_fn,
     epoch_callback_pass_train_dataset_prediction_idx=jnp.s_[:],
     epoch_callback_pass_eval_dataset_prediction_idx=jnp.s_[:10],

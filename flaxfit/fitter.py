@@ -585,7 +585,8 @@ class ModelFitter:
             ), not_abort
 
         # initial eval
-        state = self.evaluate(state, dataset_eval)
+        if dataset_eval is not None:
+            state = self.evaluate(state, dataset_eval)
         collected_metrics = self.__collect_metrics_with_epoch_index(state, 0)
         metrics_over_epochs = jax.tree_util.tree_map(
             lambda m_o_e, m: m_o_e.at[0].set(m), metrics_over_epochs, collected_metrics
@@ -609,10 +610,11 @@ class ModelFitter:
                 sample_each_batch_independent_from_dataset=sample_each_batch_independent_from_dataset,
                 batch_remainder_strategy=train_batch_remainder_strategy
             )
-            state = self.evaluate(
-                state=state,
-                dataset_eval=dataset_eval
-            )
+            if dataset_eval is not None:
+                state = self.evaluate(
+                    state=state,
+                    dataset_eval=dataset_eval
+                )
 
             # save collected metrics
             epoch = main_loop_i * evaluate_each_n_epochs

@@ -9,11 +9,11 @@ from flax import nnx
 from matplotlib import pyplot as plt
 from pyarrow.dataset import dataset
 
+from flaxfit.flax_fitter import FlaxModelFitter
 from flaxfit.callbacks.checkpointer import CheckpointerCallback, load_train_state_from_checkpoint
 from flaxfit.callbacks.trigger_every_n_steps import CallbackAtLeastEveryNEpochs
 from flaxfit.converters_and_functions import LossEntry, DatasetAndModelPredictions
 from flaxfit.dataset import Dataset, DatasetXY
-from flaxfit.flax_fitter import FlaxModelFitter
 from flaxfit.train_state import AverageMetric, TrainState
 
 
@@ -145,7 +145,8 @@ class TestFlaxTrain(TestCase):
             epoch_callback_pass_eval_dataset_prediction_idx=jnp.s_[:],
             shuffle=True,
             sample_each_batch_independent_from_dataset=False,
-            train_batch_remainder_strategy='PadValidSampled'
+            train_batch_remainder_strategy='PadValidSampled',
+            jit=False
         )
 
         print('metrics_over_epochs', metrics_over_epochs)
