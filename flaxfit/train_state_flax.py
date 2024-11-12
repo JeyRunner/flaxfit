@@ -63,6 +63,20 @@ class TrainStateFlax(TrainState):
             model_state_without_rngs=model_state_without_rngs
         )
 
+    def update_model_state_from_module(self, module: nnx.Module):
+        """
+        Update the model state (without the params) based on a nnx module.
+        Example usage:
+        model_out = my_module(batch)  # in-place step update
+        train_state = train_state.update_model_state_from_module(my_module)
+        """
+        return self.update_model_state(self.model_state_from_module(module))
+
+    @staticmethod
+    def model_state_from_module(module: nnx.Module):
+        model_graph_def, params, model_state_new = nnx.split(module, nnx.Param, filterlib.Everything())
+        return model_state_new
+
 
     @property
     def model_states_with_params(self):
