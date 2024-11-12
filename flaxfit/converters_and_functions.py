@@ -90,7 +90,7 @@ class EpochBatchSplitter(Protocol):
 
 
 @flax.struct.dataclass
-class DatasetAndModelPredictions[D]:
+class DatasetAndModelPredictions[D, D_CONVERT, PRED]:
     dataset: D
     dataset_converted_to_model_input: D
     """
@@ -98,7 +98,7 @@ class DatasetAndModelPredictions[D]:
     If not batch converter is used then this is equal to dataset.
     """
 
-    model_predictions: jaxtyping.PyTree
+    model_predictions: PRED
 
 
 class EpochCallbackFunction(Protocol):

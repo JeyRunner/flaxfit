@@ -77,10 +77,9 @@ class TrainStateFlax(TrainState):
         model_graph_def, params, model_state_new = nnx.split(module, nnx.Param, filterlib.Everything())
         return model_state_new
 
-
     @property
     def model_states_with_params(self):
-        return self.params, *self.model_state
+        return nnx.State.merge(self.params, self.model_state)
 
     def as_model(self) -> nnx.Module:
-        return nnx.merge(self.graphdef, *self.model_states_with_params)
+        return nnx.merge(self.graphdef, self.model_states_with_params)

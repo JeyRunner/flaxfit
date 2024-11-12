@@ -87,3 +87,20 @@ class FlaxModelFitter(ModelFitter):
             return prediction, model_state_new
         return forward
 
+
+
+    @staticmethod
+    def get_param_count_of_model(model) -> int:
+        graphdef, params, rest = nnx.split(model, nnx.Param, filterlib.Everything())
+        return FlaxModelFitter.get_param_count_of_model_params(params)
+
+
+    @staticmethod
+    def get_param_count_of_model_params(model_params) -> int:
+        # jax.tree_util.tree_map(lambda leaf: print(leaf.shape), params)
+        num_params = jax.tree_util.tree_reduce(lambda acc, leaf: acc + math.prod(leaf.shape), model_params, initializer=0)
+        return num_params
+
+    @staticmethod
+    def get_param_shapes(model_params) -> int:
+        return jax.tree_util.tree_map(lambda leaf: leaf.shape, model_params)
