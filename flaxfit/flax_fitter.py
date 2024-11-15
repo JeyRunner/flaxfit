@@ -20,7 +20,7 @@ from flax import nnx, struct
 from flax.nnx import filterlib
 from jaxtyping import Integer, Array, Float
 
-from flaxfit.converters_and_functions import LossFunction, MetricsFunction, EpochBatchSplitter, BatchConverter
+from flaxfit.converters_and_functions import LossFunction, MetricsFunction, EpochBatchSplitter, ModelCallBatchConverter
 from flaxfit.dataset import Dataset
 from flaxfit.fitter import ModelFitter
 from flaxfit.train_state import (
@@ -53,9 +53,9 @@ class FlaxModelFitter(ModelFitter):
 
     def __init__(self, loss_function: LossFunction = None, metrics_function: MetricsFunction = None,
                  call_model_function: CallModuleFunction = None,
-                 update_batch_size=256, evaluate_batch_size=None, batch_converter: BatchConverter = None,
+                 update_batch_size=256, evaluate_batch_size=None, model_call_batch_converter: ModelCallBatchConverter = None,
                  epoch_batch_splitter: EpochBatchSplitter = None):
-        super().__init__(loss_function, metrics_function, update_batch_size, evaluate_batch_size, batch_converter,
+        super().__init__(loss_function, metrics_function, update_batch_size, evaluate_batch_size, model_call_batch_converter,
                          epoch_batch_splitter)
         self.call_model_function = call_model_function
 

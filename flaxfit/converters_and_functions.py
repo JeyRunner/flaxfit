@@ -1,5 +1,5 @@
 import math
-from typing import Protocol, Union, Literal, Any
+from typing import Protocol, Union, Literal, Any, Optional
 
 import chex
 import jax
@@ -28,7 +28,14 @@ from flaxfit.train_state import (
 )
 
 
-class BatchConverter:
+class ModelCallBatchConverter:
+    """
+    Converts a batch directly before it is passed to the model.
+    Note that this happens within the __model_forward_and_loss function of which we compute the gradient,
+    w.r.t. the model parameters.
+    This converter is can be used for generally converting data passed to the model, not just for training it.
+    """
+
     def __init__(self, number_of_batch_dimension: int = 1):
         """
         :param number_of_batch_dimension:
@@ -45,7 +52,7 @@ class BatchConverter:
         For example when the training set has the shape (num_examples, num_sub_examples, dims),
         this function may convert each batch (batch_size, num_sub_examples, dims) from the dataset to (batch_size*num_sub_examples, dims).
         Keep in mind that in the case the real batch size is batch_size*num_sub_examples.
-        :param batch: may contain x, y entries
+        :param batch: the batch to convert
         """
         return batch
 
@@ -72,6 +79,23 @@ class BatchConverter:
                 model_output_y
             )
         return self.convert_model_output_back_before_loss(model_output_y)
+
+
+class DatasetBatchConverter:
+    """
+    Converter used during training for the eval and train set.
+    This converter is only meant to convert batch data used during training.
+    """
+
+    def convert_batch(self, batch: Dataset, rng_key: jax.random.PRNGKey) -> Dataset:
+        """
+        After splitting the dataset into batches in a training epoch, this function is called for each batch.
+        This function converts a batch (e.g. adds noise to each element)
+        before the batch is passed to the train_step function (which calculates the loss and updates the gradient).
+        :param batch: the batch to convert
+        :param rng_key: a random key that changes for each batch, can be used to e.g. add noise to the batch.
+        """
+        return batch
 
 
 class EpochBatchSplitter(Protocol):
@@ -116,7 +140,9 @@ class EpochCallbackFunction(Protocol):
         :param metrics: the calculated metrics, averaged over all the previous epochs till the last call to this function.
         :param train_model_predictions: A portion of the train dataset and the model output for it.
                                 Set the dataset entries used here by epoch_callback_pass_train_dataset_prediction_idx.
-        :param train_model_predictions: A portion of the train dataset and the model output for it.
+                                Note that when there is randomness in sampling/converting the batches used for training,
+                                this dataset will not be equivalent to that used in training (since the random keys are computed separately)
+        :param eval_model_predictions: A portion of the eval dataset and the model output for it.
                                 Set the dataset entries used here by epoch_callback_pass_train_dataset_prediction_idx.
         :return: Nothing or a boolean that indicates if the training should be continued.
         """

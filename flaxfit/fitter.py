@@ -24,8 +24,8 @@ from flax import nnx, struct
 from jaxtyping import Integer, Array, Float
 
 from flaxfit.callbacks.call_sub_args import call_fn_just_with_defined_args
-from flaxfit.converters_and_functions import LossFunction, MetricsFunction, BatchConverter, EpochBatchSplitter, \
-    LossEntry, EpochCallbackFunction, DatasetAndModelPredictions
+from flaxfit.converters_and_functions import LossFunction, MetricsFunction, ModelCallBatchConverter, EpochBatchSplitter, \
+    LossEntry, EpochCallbackFunction, DatasetAndModelPredictions, DatasetBatchConverter
 from flaxfit.dataset import Dataset, DatasetTyped
 from flaxfit.logger.util import squeeze_to_scalar
 from flaxfit.train_state import (
@@ -48,16 +48,27 @@ class ModelFitter:
         metrics_function: MetricsFunction = None,
         update_batch_size=256,
         evaluate_batch_size=None,
-        batch_converter: BatchConverter = None,
+        model_call_batch_converter: ModelCallBatchConverter = None,
+        dataset_batch_converter: DatasetBatchConverter = None,
         epoch_batch_splitter: EpochBatchSplitter = None,
     ):
+        """
+        :param loss_function: returns the loss for a given batch and model output.
+        :param metrics_function: returns the metrics for a given batch and model output.
+        :param update_batch_size: batch size for passing the train dataset through the model during training.
+        :param evaluate_batch_size: batch size for passing the evaluation dataset through the model and for general inference.
+        :param model_call_batch_converter: converts batches within the model forward function, also used during inference.
+        :param dataset_batch_converter: converts batches of the dataset used just during training (train and eval sets).
+        :param epoch_batch_splitter:
+        """
         self.update_batch_size = update_batch_size
         self.evaluate_batch_size = (
             evaluate_batch_size
             if evaluate_batch_size is not None
             else update_batch_size
         )
-        self.batch_converter = batch_converter
+        self.model_call_batch_converter = model_call_batch_converter
+        self.dataset_batch_converter = dataset_batch_converter
         self.epoch_batch_splitter = epoch_batch_splitter
 
         self.loss_function = loss_function
@@ -112,17 +123,17 @@ class ModelFitter:
         :return: loss, (prediction, model_state, loss_dict, metrics)
         """
         batch_non_flatted = batch
-        if self.batch_converter is not None:
+        if self.model_call_batch_converter is not None:
             batch, batch_non_flatted, batch_unflatten_shape = (
-                self.batch_converter._batch_to_model_input(batch)
+                self.model_call_batch_converter._batch_to_model_input(batch)
             )
         # pass through model
         prediction, model_state = model_forward_fn(
             model_params, model_state, self.batch_to_model_input(batch)
         )
 
-        if self.batch_converter is not None:
-            prediction = self.batch_converter._model_output_convert(
+        if self.model_call_batch_converter is not None:
+            prediction = self.model_call_batch_converter._model_output_convert(
                 batch_unflatten_shape, prediction
             )
         loss = self.loss_function(prediction, batch_non_flatted)
@@ -163,6 +174,12 @@ class ModelFitter:
         return state, loss, prediction
 
 
+    def __apply_dataset_batch_converter_on_batch(self, batch, rng):
+        if self.dataset_batch_converter is not None:
+            return self.dataset_batch_converter.convert_batch(batch, rng)
+        else:
+            return batch
+
     def train_epoch(
         self,
         state: TrainStateWithMetrics,
@@ -194,7 +211,7 @@ class ModelFitter:
         # sample independent batches from dataset
         if sample_each_batch_independent_from_dataset:
             assert (
-                self.batch_converter is None
+                self.model_call_batch_converter is None
             ), "when sample_each_batch_independent_from_dataset batch_converter is not supported"
             rng, sample_key = jax.random.split(rng)
             num_batches = math.ceil(dataset_size / self.update_batch_size)
@@ -202,14 +219,15 @@ class ModelFitter:
             # go over all batches
             def train_update_step(carry, x):
                 state, sample_key = carry
-                sample_key, _ = jax.random.split(sample_key)
+                sample_key, converter_key = jax.random.split(sample_key)
                 batch_idx = jax.random.choice(
                     sample_key, dataset_size, shape=(self.update_batch_size,)
                 )
                 batch = pytree_sub_index_each_leaf(dataset, batch_idx)
                 # train on batch:
                 state, loss, prediction = self.train_update_step(
-                    state, batch, update_model_states=True
+                    state, self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
+                    update_model_states=True
                 )
                 return (state, sample_key), None
 
@@ -256,15 +274,17 @@ class ModelFitter:
 
         # go over all batches
         def train_update_step(carry, batch, update_model_states=True):
-            state = carry
+            state, converter_key = carry
+            converter_key, _ = jax.random.split(converter_key)
             # train on batch:
             state, loss, prediction = self.train_update_step(
-                state, batch, update_model_states=update_model_states
+                state, self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
+                update_model_states=update_model_states
             )
-            return state, prediction
+            return (state, converter_key), prediction
 
-        state, predictions = jax.lax.scan(
-            train_update_step, init=state, xs=dataset_batched
+        (state, rng), predictions = jax.lax.scan(
+            train_update_step, init=(state, rng), xs=dataset_batched
         )
 
         predictions_extra_last_batch = None
@@ -274,9 +294,10 @@ class ModelFitter:
                 "will do separate last call to the model for last batch "
                 "(this will just update the model params but not the other model states, since batch size is smaller)"
             )
+            converter_key, _ = jax.random.split(rng)
             # just update model params but not other model states, since here the batch size is different
-            state, predictions_extra_last_batch = train_update_step(
-                state, last_batch_remainder, update_model_states=False
+            (state, _), predictions_extra_last_batch = train_update_step(
+                (state, converter_key), last_batch_remainder, update_model_states=False
             )
 
         # recombine predictions from all batches
@@ -334,7 +355,7 @@ class ModelFitter:
                 state=state, dataset=dataset_train, shuffle=shuffle,
                 batch_remainder_strategy=batch_remainder_strategy,
                 sample_each_batch_independent_from_dataset=sample_each_batch_independent_from_dataset,
-                rng = rng_shuffle_dataset
+                rng=rng_shuffle_dataset
             )
             return (state, rng), None
 
@@ -352,6 +373,7 @@ class ModelFitter:
         self,
         state: TrainStateWithMetrics,
         dataset_eval: Dataset,
+        rng_key: jax.random.PRNGKey
     ) -> TrainStateWithMetrics:
         """
         Pass the evaluation dataset through the model and calc loss and metrics.
@@ -360,12 +382,14 @@ class ModelFitter:
         :return: new training state with just the eval metrics updated (model state is not changed).
         """
         def eval_step(carry, batch):
-            state: TrainStateWithMetrics = carry
+            state: TrainStateWithMetrics
+            state, converter_key = carry
+            converter_key, _ = jax.random.split(converter_key)
             loss, (prediction, model_state, loss_dict, metrics) = self.__model_forward_and_loss(
                 state.train_state.params,
                 state.train_state.model_state,
                 model_forward_fn=self.make_model_forward_fn(state.train_state),
-                batch=batch
+                batch=self.__apply_dataset_batch_converter_on_batch(batch, converter_key)
             )
             # do not update the model state
             # just update the eval metrics
@@ -373,12 +397,12 @@ class ModelFitter:
             state = state.replace(
                 metrics_eval=state.metrics_eval.update(loss_dict, metrics)
             )
-            return state, None
+            return (state, converter_key), None
 
-        state, _ = batchix.vmap_scan.scan_batched(
+        (state, _), _ = batchix.vmap_scan.scan_batched(
             eval_step,
             x=dataset_eval,
-            fn_carry_init=state,
+            fn_carry_init=(state, rng_key),
             batch_size=self.evaluate_batch_size,
             batch_remainder_strategy='None'
         )
@@ -402,17 +426,17 @@ class ModelFitter:
         def forward_batch(train_state: TrainState, batch):
             model_forward_fn = self.make_model_forward_fn(train_state)
             batch_non_flatted = batch
-            if self.batch_converter is not None:
+            if self.model_call_batch_converter is not None:
                 batch, batch_non_flatted, batch_unflatten_shape = (
-                    self.batch_converter._batch_to_model_input(batch)
+                    self.model_call_batch_converter._batch_to_model_input(batch)
                 )
             # pass through model
             prediction, model_state = model_forward_fn(
                 train_state.params, train_state.model_state, self.batch_to_model_input(batch)
             )
 
-            if self.batch_converter is not None:
-                prediction = self.batch_converter._model_output_convert(
+            if self.model_call_batch_converter is not None:
+                prediction = self.model_call_batch_converter._model_output_convert(
                     batch_unflatten_shape, prediction
                 )
             train_state = train_state.update_model_state(model_state)
@@ -474,6 +498,7 @@ class ModelFitter:
             "None", "PadValidSampled", "ExtraLastBatch"
         ] = "ExtraLastBatch",
         dataset_eval: DatasetTyped | None = None,
+        eval_fixed_random_key: bool = True,
         epoch_callback_fn: EpochCallbackFunction | list[EpochCallbackFunction] | None = None,
         epoch_callback_pass_train_dataset_prediction_idx: Any | Integer[Array, 'num'] = None,
         epoch_callback_pass_eval_dataset_prediction_idx: Any | Integer[Array, 'num2'] = None,
@@ -484,6 +509,8 @@ class ModelFitter:
         Run the training for multiple epochs on the given train dataset.
         :param dataset: training dataset.
         :param dataset_eval: evaluation dataset.
+        :param eval_fixed_random_key: when using a dataset_batch_converter,
+                        should the random samples of this converter stay the same between evaluations.
         :param epoch_callback_fn: Callback function executed every 'evaluate_each_n_epochs' train epochs.
                     Can be used for logging.
                     Takes parameters: (epoch_i, a dict with the metrics, train predictions, eval predictions, train_state).
@@ -514,15 +541,19 @@ class ModelFitter:
         )
 
 
-
-        def __make_callback_model_predictions(state, dataset, dataset_idx):
+        if self.dataset_batch_converter is not None:
+            assert (
+                epoch_callback_pass_train_dataset_prediction_idx is None
+                and epoch_callback_pass_eval_dataset_prediction_idx is None
+            ), "if using dataset_batch_converter using epoch_callback_pass_..._idx is not supported, set these to None"
+        def __make_callback_model_predictions(state, dataset, dataset_idx, is_train_set=False):
             if (dataset is None) or dataset_idx is None:
                 return None
             callback_dataset = pytree_sub_index_each_leaf(dataset, dataset_idx)
             train_state, predictions, dataset_converted_to_model_input = self.model_forward_dataset(
                 state.train_state,
                 callback_dataset,
-                batch_size=self.evaluate_batch_size
+                batch_size=self.update_batch_size if is_train_set else self.evaluate_batch_size
             )
             return DatasetAndModelPredictions(
                 dataset=callback_dataset,
@@ -564,11 +595,11 @@ class ModelFitter:
             not_abort = True
             if epoch_callback_fn is not None:
                 train_model_predictions = __make_callback_model_predictions(
-                    state, dataset, epoch_callback_pass_train_dataset_prediction_idx
+                    state, dataset, epoch_callback_pass_train_dataset_prediction_idx, is_train_set=True
                 )
                 # @todo
                 eval_model_predictions = __make_callback_model_predictions(
-                    state, dataset_eval, epoch_callback_pass_eval_dataset_prediction_idx
+                    state, dataset_eval, epoch_callback_pass_eval_dataset_prediction_idx, is_train_set=True
                 )
                 not_abort = jax.experimental.io_callback(
                     host_callback,
@@ -585,8 +616,9 @@ class ModelFitter:
             ), not_abort
 
         # initial eval
+        rng, rng_eval = jax.random.split(rng)
         if dataset_eval is not None:
-            state = self.evaluate(state, dataset_eval)
+            state = self.evaluate(state, dataset_eval, rng_eval)
         collected_metrics = self.__collect_metrics_with_epoch_index(state, 0)
         metrics_over_epochs = jax.tree_util.tree_map(
             lambda m_o_e, m: m_o_e.at[0].set(m), metrics_over_epochs, collected_metrics
@@ -599,7 +631,7 @@ class ModelFitter:
         # for epoch_i in range(num_eval_steps):
         def train_for_n_epochs(carry):
             state, metrics_over_epochs, rng_train_epochs, main_loop_i, not_abort = carry
-            rng_train_epochs, _ = jax.random.split(rng_train_epochs)
+            rng_train_epochs, key_eval_per_epoch = jax.random.split(rng_train_epochs)
 
             state = self.train_epochs(
                 state=state,
@@ -613,7 +645,8 @@ class ModelFitter:
             if dataset_eval is not None:
                 state = self.evaluate(
                     state=state,
-                    dataset_eval=dataset_eval
+                    dataset_eval=dataset_eval,
+                    rng_key=rng_eval if eval_fixed_random_key else key_eval_per_epoch
                 )
 
             # save collected metrics

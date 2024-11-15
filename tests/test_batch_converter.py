@@ -4,7 +4,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from flaxfit.converters_and_functions import BatchConverter
+from flaxfit.converters_and_functions import ModelCallBatchConverter
 from flaxfit.dataset import Dataset
 from flaxfit.train_state import AverageMetric
 from tests.common import ExampleData
@@ -12,7 +12,7 @@ from tests.common import ExampleData
 
 class TestBatchConverter(TestCase):
     def test_2_batch_dims(self):
-        converter = BatchConverter(number_of_batch_dimension=2)
+        converter = ModelCallBatchConverter(number_of_batch_dimension=2)
 
         second_batch_dim_size = 5
         base_data = jnp.arange(second_batch_dim_size)[:, jnp.newaxis]
