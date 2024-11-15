@@ -20,7 +20,8 @@ from flax import nnx, struct
 from flax.nnx import filterlib
 from jaxtyping import Integer, Array, Float
 
-from flaxfit.converters_and_functions import LossFunction, MetricsFunction, EpochBatchSplitter, ModelCallBatchConverter
+from flaxfit.converters_and_functions import LossFunction, MetricsFunction, EpochBatchSplitter, ModelCallBatchConverter, \
+    DatasetBatchConverter
 from flaxfit.dataset import Dataset
 from flaxfit.fitter import ModelFitter
 from flaxfit.train_state import (
@@ -54,9 +55,21 @@ class FlaxModelFitter(ModelFitter):
     def __init__(self, loss_function: LossFunction = None, metrics_function: MetricsFunction = None,
                  call_model_function: CallModuleFunction = None,
                  update_batch_size=256, evaluate_batch_size=None, model_call_batch_converter: ModelCallBatchConverter = None,
+                 dataset_batch_converter: DatasetBatchConverter = None,
                  epoch_batch_splitter: EpochBatchSplitter = None):
-        super().__init__(loss_function, metrics_function, update_batch_size, evaluate_batch_size, model_call_batch_converter,
-                         epoch_batch_splitter)
+        """
+        :param loss_function: returns the loss for a given batch and model output.
+        :param metrics_function: returns the metrics for a given batch and model output.
+        :param update_batch_size: batch size for passing the train dataset through the model during training.
+        :param evaluate_batch_size: batch size for passing the evaluation dataset through the model and for general inference.
+        :param model_call_batch_converter: converts batches within the model forward function, also used during inference.
+        :param dataset_batch_converter: converts batches of the dataset used just during training (train and eval sets).
+        :param epoch_batch_splitter:
+        """
+        super().__init__(
+            loss_function, metrics_function, update_batch_size, evaluate_batch_size, model_call_batch_converter,
+            dataset_batch_converter, epoch_batch_splitter
+        )
         self.call_model_function = call_model_function
 
 

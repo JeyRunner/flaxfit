@@ -457,6 +457,7 @@ class ModelFitter:
         Create the initial train and eval metrics by dummy calling the loss and metrics functions.
         """
         def forward(batch):
+            batch = self.__apply_dataset_batch_converter_on_batch(batch, rng=jax.random.PRNGKey(0))
             (loss, (prediction, model_state, loss_dict, metrics)) = self.__model_forward_and_loss(
                 train_state.params,
                 train_state.model_state,
