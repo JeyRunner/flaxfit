@@ -4,7 +4,6 @@ import jax.numpy as jnp
 import jax.tree_util
 import jaxtyping
 import optax
-from cfgv import NotIn
 from flax import nnx, struct
 from jaxtyping import Integer, Array
 
