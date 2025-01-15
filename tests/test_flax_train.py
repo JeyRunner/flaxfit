@@ -90,17 +90,26 @@ class TestFlaxTrain(TestCase):
         # out = model(dataset.x)
         # print(out)
 
-        def loss(predictions_y, dataset: DatasetXY):
-            return dict(
+        with_final_layer_reg = False
+        def loss(predictions_y, dataset: DatasetXY, model: nnx.Sequential):
+            l = dict(
                 mse=jnp.mean((predictions_y - dataset.y)**2),
-                output_small=LossEntry(value=jnp.mean(jnp.abs(predictions_y)), weight=0.000)
+                output_small=LossEntry(value=jnp.mean(jnp.abs(predictions_y)), weight=0.000),
             )
+            if with_final_layer_reg:
+                l |= dict(
+                    regularize_final_bias=5000 * (jnp.mean(model.layers[-1].kernel ** 2) + jnp.mean(model.layers[-1].bias ** 2))
+                )
+            return l
 
         fig = plt.figure()
         ax = fig.subplots(1, 1)
         fig.show()
 
-        os.makedirs('out/test_fit_simple_NN/', exist_ok=True)
+        out_folder = 'out/test_fit_simple_NN'
+        if with_final_layer_reg:
+            out_folder += '_withmodelReg'
+        os.makedirs(out_folder, exist_ok=True)
         def callback(
              epoch: int, metrics: dict,
              train_model_predictions: DatasetAndModelPredictions,
@@ -116,7 +125,7 @@ class TestFlaxTrain(TestCase):
             fig.suptitle(f"{epoch}")
             fig.canvas.draw()
             fig.canvas.flush_events()
-            plt.savefig(f'out/test_fit_simple_NN/epoch_{epoch}.png')
+            plt.savefig(f'{out_folder}/epoch_{epoch}.png')
 
         fitter = FlaxModelFitter(
             update_batch_size=10,
@@ -146,11 +155,10 @@ class TestFlaxTrain(TestCase):
             shuffle=True,
             sample_each_batch_independent_from_dataset=False,
             train_batch_remainder_strategy='PadValidSampled',
-            jit=False
+            jit=True
         )
 
         print('metrics_over_epochs', metrics_over_epochs)
-        assert metrics_over_epochs['train']['loss']['total'][-1] <= 1e-2
 
         train_state = load_train_state_from_checkpoint(
             train_state_init=train_state,
@@ -159,5 +167,8 @@ class TestFlaxTrain(TestCase):
 
         plt.figure()
         plt.plot(metrics_over_epochs['__epoch'], metrics_over_epochs['train']['loss']['total'])
-        plt.savefig(f'out/test_fit_simple_NN/loss.png')
+        plt.savefig(f'{out_folder}/loss.png')
         plt.show()
+
+        assert metrics_over_epochs['train']['loss']['total'][-1] <= 1e-2
+

@@ -1,5 +1,5 @@
 import math
-from typing import Protocol, Union, Literal, Any
+from typing import Protocol, Union, Literal, Any, Callable
 
 import chex
 import jax
@@ -28,7 +28,7 @@ from flaxfit.train_state import (
     TrainStateWithMetrics,
     Metric,
     TrainState,
-    ModelForwardFn,
+    ModelForwardFn, ModelFromTrainStateFn,
 )
 from flaxfit.train_state_flax import TrainStateFlax
 
@@ -87,6 +87,13 @@ class FlaxModelFitter(ModelFitter):
             tx=optimizer
         )
 
+
+    def make_model_from_train_state_fn(self, train_state: TrainStateFlax) -> ModelFromTrainStateFn[nnx.Module]:
+        def model_from_train_state(params, model_state):
+            # recombine to model, do calls to model which changes the model state, split the model again into states
+            model = nnx.merge(train_state.graphdef, params, model_state)
+            return model
+        return model_from_train_state
 
     def make_model_forward_fn(self, train_state: TrainStateFlax) -> ModelForwardFn:
         def forward(params, model_state, batch):

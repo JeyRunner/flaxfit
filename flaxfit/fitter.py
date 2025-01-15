@@ -32,7 +32,7 @@ from flaxfit.train_state import (
     TrainStateWithMetrics,
     Metric,
     TrainState,
-    ModelForwardFn, MetricsWithLoss, AverageMetric,
+    ModelForwardFn, MetricsWithLoss, AverageMetric, ModelFromTrainStateFn,
 )
 
 
@@ -71,8 +71,17 @@ class ModelFitter:
         self.dataset_batch_converter = dataset_batch_converter
         self.epoch_batch_splitter = epoch_batch_splitter
 
-        self.loss_function = loss_function
+        self.__loss_function = loss_function
         self.metrics_function = metrics_function
+
+
+    def loss_function(self, predictions_y, dataset: Dataset, model):
+        args = inspect.getfullargspec(self.__loss_function).args
+        given_additional_args = {}
+        if 'model' in args:
+            given_additional_args = dict(model=model)
+        return self.__loss_function(predictions_y, dataset, **given_additional_args)
+
 
 
     def batch_to_model_input(self, batch: Dataset):
@@ -82,6 +91,9 @@ class ModelFitter:
         """
         return batch.x
 
+
+    def make_model_from_train_state_fn(self, train_state: TrainState) -> ModelFromTrainStateFn:
+        raise NotImplementedError()
 
     def make_model_forward_fn(self, train_state: TrainState) -> ModelForwardFn:
         raise NotImplementedError()
@@ -112,6 +124,7 @@ class ModelFitter:
         model_params: jaxtyping.PyTree,
         model_state: jaxtyping.PyTree,
         model_forward_fn: ModelForwardFn,
+        model_from_train_state_fn: ModelFromTrainStateFn,
         batch: Dataset,
     ):
         """
@@ -136,7 +149,7 @@ class ModelFitter:
             prediction = self.model_call_batch_converter._model_output_convert(
                 batch_unflatten_shape, prediction
             )
-        loss = self.loss_function(prediction, batch_non_flatted)
+        loss = self.loss_function(prediction, batch_non_flatted, model_from_train_state_fn(model_params, model_state))
         loss, loss_dict = self.__get_loss_sum_and_dict_from_loss(loss)
         metrics = {}
         if self.metrics_function is not None:
@@ -160,6 +173,7 @@ class ModelFitter:
             state.train_state.params,
             state.train_state.model_state,
             self.make_model_forward_fn(state.train_state),
+            self.make_model_from_train_state_fn(state.train_state),
             batch,
         )
         train_state = state.train_state.apply_gradients(grads)
@@ -389,6 +403,7 @@ class ModelFitter:
                 state.train_state.params,
                 state.train_state.model_state,
                 model_forward_fn=self.make_model_forward_fn(state.train_state),
+                model_from_train_state_fn=self.make_model_from_train_state_fn(state.train_state),
                 batch=self.__apply_dataset_batch_converter_on_batch(batch, converter_key)
             )
             # do not update the model state
@@ -461,8 +476,9 @@ class ModelFitter:
             (loss, (prediction, model_state, loss_dict, metrics)) = self.__model_forward_and_loss(
                 train_state.params,
                 train_state.model_state,
-                self.make_model_forward_fn(train_state),
-                batch,
+                model_forward_fn=self.make_model_forward_fn(train_state),
+                model_from_train_state_fn=self.make_model_from_train_state_fn(train_state),
+                batch=batch,
             )
             return loss_dict, metrics
         loss_dict, metrics = jax.eval_shape(forward, pytree_sub_index_each_leaf(dummy_dataset, jnp.s_[:1]))

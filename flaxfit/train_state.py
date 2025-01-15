@@ -21,6 +21,18 @@ class ModelForwardFn:
         :return: The model output for the batch, new change model state
         """
 
+class ModelFromTrainStateFn[T]:
+    def __call__(
+        self,
+        params: jaxtyping.PyTree,
+        model_state: jaxtyping.PyTree,
+    ) -> T:
+        """
+        Get the model object given its parameters and state.
+        :return: The model
+        """
+
+
 
 @flax.struct.dataclass
 class TrainState(struct.PyTreeNode):

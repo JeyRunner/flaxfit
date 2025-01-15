@@ -156,10 +156,12 @@ class LossEntry:
 
 class LossFunction(Protocol):
     def __call__(
-        self, predictions_y, dataset: Dataset
+        self, predictions_y, dataset: Dataset, model=None
     ) -> Union[Float[Array, ""], dict[str, LossEntry | Float[Array, ""]]]:
         """
         Return the loss for given batch of model predictions and dataset (contains labels).
+        :param model: The model class where the model parameters can be used in the loss.
+                        The model should not be called (since the model state will not be updated!).
         :return: either a single loss or a dict of individual loss values optionally with weights (these will be summed)
         """
 
