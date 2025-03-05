@@ -1,4 +1,5 @@
 import os
+import pathlib
 from unittest import TestCase
 
 import chex
@@ -10,7 +11,8 @@ from matplotlib import pyplot as plt
 from pyarrow.dataset import dataset
 
 from flaxfit.flax_fitter import FlaxModelFitter
-from flaxfit.callbacks.checkpointer import CheckpointerCallback, load_train_state_from_checkpoint
+from flaxfit.callbacks.checkpointer import CheckpointerCallback, load_train_state_from_checkpoint, \
+    save_model_checkpoint, create_checkpointer
 from flaxfit.callbacks.trigger_every_n_steps import CallbackAtLeastEveryNEpochs
 from flaxfit.converters_and_functions import LossEntry, DatasetAndModelPredictions
 from flaxfit.dataset import Dataset, DatasetXY
@@ -162,7 +164,8 @@ class TestFlaxTrain(TestCase):
 
         train_state = load_train_state_from_checkpoint(
             train_state_init=train_state,
-            path='out/checkpoints'
+            path='out/checkpoints',
+            evaluation_mode=True
         )
 
         plt.figure()
@@ -171,4 +174,35 @@ class TestFlaxTrain(TestCase):
         plt.show()
 
         assert metrics_over_epochs['train']['loss']['total'][-1] <= 1e-2
+
+
+
+    def test_save_load(self):
+        rngs = nnx.Rngs(0)
+        model = nnx.Sequential(
+            nnx.Linear(in_features=1, out_features=1, rngs=rngs),
+        )
+
+        out_folder = 'out/test_save_load'
+        os.makedirs(out_folder, exist_ok=True)
+
+        fitter = FlaxModelFitter(
+            update_batch_size=10,
+            evaluate_batch_size=10,
+            loss_function=None,
+        )
+
+        train_state = fitter.create_train_state(
+            model, optimizer=optax.adam(learning_rate=0.00001)
+        )
+        checkpointer = create_checkpointer(path=out_folder)
+        save_model_checkpoint(checkpointer, train_state, epoch=1, remove_rng_state=True)
+        checkpointer.close()
+
+        train_state = load_train_state_from_checkpoint(
+            train_state_init=train_state,
+            path=out_folder,
+            evaluation_mode=True,
+            step=1
+        )
 

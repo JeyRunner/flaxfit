@@ -65,14 +65,14 @@ def load_train_state_from_checkpoint(
     train_state = train_state.replace(rng_state=train_state_rng_state)
 
     if evaluation_mode:
-      model: nnx.Module = nnx.merge(train_state.graphdef, train_state.params, *train_state.model_state)
+      model: nnx.Module = nnx.merge(train_state.graphdef, train_state.model_states_with_params)
       # set to evaluation mode: e.g. to effect dropout
       model.eval()
-      graph_def, params, model_state = nnx.split(model, nnx.Param, filterlib.Everything())
+      graphdef, params, rng_state, model_state_without_rngs = nnx.split(model, nnx.Param, nnx.RngState, filterlib.Everything())
       train_state = train_state.replace(
-        graph_def=graph_def,
+        graphdef=graphdef,
         params=params,
-        model_state=model_state
+        model_state_without_rngs=model_state_without_rngs
       )
     return train_state
 
