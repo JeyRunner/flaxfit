@@ -7,6 +7,7 @@ import flax
 import jax.numpy as jnp
 import jaxtyping
 import optax
+import rich
 from batchix.batching import (
     pytree_sub_index_each_leaf,
     pytree_split_in_batches_with_remainder,
@@ -74,7 +75,11 @@ class FlaxModelFitter(ModelFitter):
 
 
     @staticmethod
-    def create_train_state(model: nnx.Module, optimizer=optax.adam(learning_rate=0.0002)) -> TrainStateFlax:
+    def create_train_state(
+        model: nnx.Module,
+        optimizer=optax.adam(learning_rate=0.0002),
+        optimizer_only_update: filterlib.Filter = nnx.Param
+    ) -> TrainStateFlax:
         """
         Creates an initial train state.
         """
@@ -84,7 +89,8 @@ class FlaxModelFitter(ModelFitter):
             graphdef=graphdef,
             params=params,
             model_state=model_state,
-            tx=optimizer
+            tx=optimizer,
+            wrt=optimizer_only_update
         )
 
 
@@ -96,9 +102,10 @@ class FlaxModelFitter(ModelFitter):
         return model_from_train_state
 
     def make_model_forward_fn(self, train_state: TrainStateFlax) -> ModelForwardFn:
-        def forward(params, model_state, batch):
+        def forward(params, model_state, batch, model: nnx.Module = None):
             # recombine to model, do calls to model which changes the model state, split the model again into states
-            model = nnx.merge(train_state.graphdef, params, model_state)
+            if model is None:
+                model = nnx.merge(train_state.graphdef, params, model_state)
             if self.call_model_function is None:
                 prediction = model(batch)
             else:
@@ -124,3 +131,116 @@ class FlaxModelFitter(ModelFitter):
     @staticmethod
     def get_param_shapes(model_params) -> int:
         return jax.tree_util.tree_map(lambda leaf: leaf.shape, model_params)
+
+
+
+    def _model_forward_and_loss(
+        self,
+        model_params: jaxtyping.PyTree,
+        model_state: jaxtyping.PyTree,
+        model_forward_fn: ModelForwardFn,
+        model_from_train_state_fn: ModelFromTrainStateFn,
+        batch: Dataset,
+        model: nnx.Module = None
+    ):
+        """
+        Pass batch through the model and calculate loss and metrics.
+        If model is given all other args except for batch are ignored. This is used for gradient calc with nnx.grad.
+        :param model_params:
+        :param model_state:
+        :param model_forward_fn:
+        :param batch:
+        :return: loss, (prediction, model_state, loss_dict, metrics)
+        """
+        batch_non_flatted = batch
+        if self.model_call_batch_converter is not None:
+            batch, batch_non_flatted, batch_unflatten_shape = (
+                self.model_call_batch_converter._batch_to_model_input(batch)
+            )
+
+        if model is None:
+            # pass through model
+            prediction, model_state = model_forward_fn(
+                model_params, model_state, self.batch_to_model_input(batch)
+            )
+        else:
+            # pass through model nnx style
+            prediction, model_state = model_forward_fn(
+                # params, model_state, batch, model
+                params=None, model_state=None,
+                batch=self.batch_to_model_input(batch), model=model
+            )
+            # note that the model_state coming from model_forward_fn will not be used later
+
+
+        if self.model_call_batch_converter is not None:
+            prediction = self.model_call_batch_converter._model_output_convert(
+                batch_unflatten_shape, prediction
+            )
+
+        if model is None:
+            model_after_forward = model_from_train_state_fn(model_params, model_state)
+        else:
+            model_after_forward = model
+
+        loss = self.loss_function(prediction, batch_non_flatted, model_after_forward)
+        loss, loss_dict = self._get_loss_sum_and_dict_from_loss(loss)
+        metrics = {}
+        if self.metrics_function is not None:
+            metrics = self.metrics_function(prediction, batch_non_flatted)
+        return loss, (prediction, model_state, loss_dict, metrics)
+
+
+
+    def train_update_step(
+        self,
+        state: TrainStateWithMetrics,
+        batch: Dataset,
+        update_model_states=True,
+    ):
+        """
+        Train for a single step given the input data x and labels y.
+        :param ignore_last_n_elements_in_batch: exclude these last n elements from calculating the loss.
+        """
+        # if we don't want to update all model params we need to use nnx.grad
+        wrt = state.train_state.wrt #filterlib.All(nnx.Param, filterlib.PathContains('layers_out'))
+        use_nnx_grad = wrt != nnx.Param
+
+        # normal grad with normal jax model call
+        if not use_nnx_grad:
+            (loss, (prediction, model_state, loss_dict, metrics)), grads = jax.value_and_grad(
+                self._model_forward_and_loss, has_aux=True
+            )(
+                state.train_state.params,
+                state.train_state.model_state,
+                self.make_model_forward_fn(state.train_state),
+                self.make_model_from_train_state_fn(state.train_state),
+                batch,
+            )
+        else:
+            model = state.train_state.as_model()
+            (loss, (prediction, __model_state, loss_dict, metrics)), grads = nnx.value_and_grad(
+                self._model_forward_and_loss, has_aux=True, argnums=nnx.DiffState(5, filter=wrt)
+            )(
+                None,  # params
+                None,  # model_state
+                self.make_model_forward_fn(None),
+                None,  # make_model_from_train_state_fn
+                batch,
+                model
+            )
+            model_graph_def, params, model_state = nnx.split(model, nnx.Param, filterlib.Everything())
+
+        rich.print(grads)
+
+
+        train_state = state.train_state.apply_gradients(grads)
+        # just update batchstats when the full batch is valid, otherwise the calculated batch stats are not accurate
+        if update_model_states:
+            train_state = train_state.update_model_state(model_state)
+
+        # update the metrics
+        state = state.replace(
+            train_state=train_state, metrics_train=state.metrics_train.update(loss_dict, metrics)
+        )
+        return state, loss, prediction

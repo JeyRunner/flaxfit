@@ -99,7 +99,7 @@ class ModelFitter:
         raise NotImplementedError()
 
 
-    def __get_loss_sum_and_dict_from_loss(self, loss_fn_output):
+    def _get_loss_sum_and_dict_from_loss(self, loss_fn_output):
         loss_dict = {}
         if isinstance(loss_fn_output, dict):
             loss_sum = 0.0
@@ -119,7 +119,7 @@ class ModelFitter:
         return loss_sum, loss_dict
 
 
-    def __model_forward_and_loss(
+    def _model_forward_and_loss(
         self,
         model_params: jaxtyping.PyTree,
         model_state: jaxtyping.PyTree,
@@ -150,7 +150,7 @@ class ModelFitter:
                 batch_unflatten_shape, prediction
             )
         loss = self.loss_function(prediction, batch_non_flatted, model_from_train_state_fn(model_params, model_state))
-        loss, loss_dict = self.__get_loss_sum_and_dict_from_loss(loss)
+        loss, loss_dict = self._get_loss_sum_and_dict_from_loss(loss)
         metrics = {}
         if self.metrics_function is not None:
             metrics = self.metrics_function(prediction, batch_non_flatted)
@@ -168,7 +168,7 @@ class ModelFitter:
         :param ignore_last_n_elements_in_batch: exclude these last n elements from calculating the loss.
         """
         (loss, (prediction, model_state, loss_dict, metrics)), grads = jax.value_and_grad(
-            self.__model_forward_and_loss, has_aux=True
+            self._model_forward_and_loss, has_aux=True
         )(
             state.train_state.params,
             state.train_state.model_state,
@@ -399,7 +399,7 @@ class ModelFitter:
             state: TrainStateWithMetrics
             state, converter_key = carry
             converter_key, _ = jax.random.split(converter_key)
-            loss, (prediction, model_state, loss_dict, metrics) = self.__model_forward_and_loss(
+            loss, (prediction, model_state, loss_dict, metrics) = self._model_forward_and_loss(
                 state.train_state.params,
                 state.train_state.model_state,
                 model_forward_fn=self.make_model_forward_fn(state.train_state),
@@ -473,7 +473,7 @@ class ModelFitter:
         """
         def forward(batch):
             batch = self.__apply_dataset_batch_converter_on_batch(batch, rng=jax.random.PRNGKey(0))
-            (loss, (prediction, model_state, loss_dict, metrics)) = self.__model_forward_and_loss(
+            (loss, (prediction, model_state, loss_dict, metrics)) = self._model_forward_and_loss(
                 train_state.params,
                 train_state.model_state,
                 model_forward_fn=self.make_model_forward_fn(train_state),

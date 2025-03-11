@@ -17,6 +17,7 @@ class TrainStateFlax(TrainState):
     params: nnx.Param
     model_state_without_rngs: nnx.State
     rng_state: nnx.State
+    wrt: filterlib.Filter = flax.struct.field(pytree_node=False)
 
     @classmethod
     def create(
@@ -27,27 +28,42 @@ class TrainStateFlax(TrainState):
         tx: optax.GradientTransformation,
         opt_state: optax.OptState | None = None,
         step: int = 0,
+        wrt: filterlib.Filter = nnx.Param,
         **kwargs,
     ):
         """
         Create TrainState.
         Will init opt_state if opt_state is not provided.
         """
+        # ensure that we just update params
+        if wrt != nnx.Param:
+            wrt = filterlib.All(nnx.Param, wrt)
         rng_state, model_state_without_rngs = model_state.split(nnx.RngState, filterlib.Everything())
-        return super().create(
+        train_state: TrainStateFlax = super().create(
             params, tx, opt_state, step=step, graphdef=graphdef,
             rng_state=rng_state,
-            model_state_without_rngs=model_state_without_rngs
+            model_state_without_rngs=model_state_without_rngs,
+            wrt=wrt
         )
+        if opt_state is None:
+            opt_state = tx.init(nnx.state(train_state.as_model(), wrt))
+            train_state = train_state.replace(opt_state=opt_state)
+        return train_state
 
     def apply_gradients(self, gradients: jaxtyping.PyTree) -> jaxtyping.PyTree:
         """
         Apply gradients to the model parameters
         :return: The new updated parameters
         """
-        updates, opt_state = self.tx.update(gradients, self.opt_state, self.params)
-        params = optax.apply_updates(self.params, updates)  # type: ignore
+        model = self.as_model()
+        params_to_update = nnx.state(model, self.wrt)
+        updates, opt_state = self.tx.update(gradients, self.opt_state, params_to_update)
+        params = optax.apply_updates(params_to_update, updates)  # type: ignore
         step = self.step + 1
+
+        # update model params as get full list of params back from model
+        nnx.update(model, params)
+        model_graph_def, params, model_state_new = nnx.split(model, nnx.Param, filterlib.Everything())
         return self.replace(params=params, opt_state=opt_state, step=step)
 
 

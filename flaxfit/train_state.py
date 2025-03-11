@@ -1,3 +1,5 @@
+from typing import Any
+
 import chex
 import flax
 import jax.numpy as jnp
@@ -14,6 +16,7 @@ class ModelForwardFn:
         params: jaxtyping.PyTree,
         model_state: jaxtyping.PyTree,
         batch: jaxtyping.PyTree,
+        model: Any = None
     ) -> tuple[jaxtyping.PyTree, jaxtyping.PyTree]:
         """
         Pass a batch through the model given its parameters and state.
@@ -64,8 +67,6 @@ class TrainState(struct.PyTreeNode):
         Create TrainState.
         Will init opt_state if opt_state is not provided.
         """
-        if opt_state is None:
-            opt_state = tx.init(params)
         return cls(
             params=params, opt_state=opt_state, tx=tx, step=jnp.asarray(step), **kwargs
         )
