@@ -205,6 +205,7 @@ class FlaxModelFitter(ModelFitter):
         # if we don't want to update all model params we need to use nnx.grad
         wrt = state.train_state.wrt #filterlib.All(nnx.Param, filterlib.PathContains('layers_out'))
         use_nnx_grad = wrt != nnx.Param
+        print(f'> flaxfit using {"default jax.grad" if (not use_nnx_grad) else "nnx.grad (required since not all params are updated)"} for updating parameters')
 
         # normal grad with normal jax model call
         if not use_nnx_grad:
@@ -231,8 +232,7 @@ class FlaxModelFitter(ModelFitter):
             )
             model_graph_def, params, model_state = nnx.split(model, nnx.Param, filterlib.Everything())
 
-        rich.print(grads)
-
+        # rich.print(grads)
 
         train_state = state.train_state.apply_gradients(grads)
         # just update batchstats when the full batch is valid, otherwise the calculated batch stats are not accurate
