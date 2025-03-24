@@ -18,11 +18,11 @@ class ModelForwardFn:
         batch: jaxtyping.PyTree,
         model: Any = None,
         model_call_kwargs: dict = None
-    ) -> tuple[jaxtyping.PyTree, jaxtyping.PyTree]:
+    ) -> tuple[jaxtyping.PyTree, jaxtyping.PyTree, jaxtyping.PyTree]:
         """
         Pass a batch through the model given its parameters and state.
         :param batch: Pass this batch through the model
-        :return: The model output for the batch, new change model state
+        :return: The model output for the batch, new change model state, model carry out (can be used by BatchProcessStepFunction)
         """
 
 class ModelFromTrainStateFn[T]:

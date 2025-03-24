@@ -54,7 +54,8 @@ class TestFlaxTrainComplex(TestCase):
                 model: Model,
                 batch_x,
                 info: dict,
-                batch_sub_update: int
+                batch_sub_update: int,
+                last_model_in
             ) -> Any:
                 """
                 Custom call to the module.
@@ -66,7 +67,9 @@ class TestFlaxTrainComplex(TestCase):
                 random = jax.random.normal(model.rng(), shape=batch_x.shape)
                 jax.debug.print("random {}", random[0, 0])
                 batch_x += random*0.05*batch_sub_update
-                return model(batch_x)
+                batch_x = (batch_x + last_model_in)/2.0
+                model_out = model(batch_x)
+                return model_out, batch_x
                 #return dict(new_loss=jnp.mean((model(batch_x) - batch_x**2)**2))
 
             def train_update_step(
@@ -88,17 +91,18 @@ class TestFlaxTrainComplex(TestCase):
 
                 # do multiple update steps for the one batch
                 def sub_step(carry, x):
-                    state = carry
+                    state, last_model_in = carry
                     model_call_kwargs = dict(
                         info=state.info,
-                        batch_sub_update=x
+                        batch_sub_update=x,
+                        last_model_in=last_model_in
                     )
-                    state, loss_dict, metrics_dict = pass_batch_through_model_and_update_state_fn(
+                    state, loss_dict, metrics_dict, last_model_in = pass_batch_through_model_and_update_state_fn(
                         state, batch, model_call_kwargs
                     )
-                    return state, (loss_dict, metrics_dict)
+                    return (state, last_model_in), (loss_dict, metrics_dict)
 
-                state, (loss_dict, metrics_dict) = jax.lax.scan(sub_step, init=state, xs=jnp.arange(5))
+                (state, _), (loss_dict, metrics_dict) = jax.lax.scan(sub_step, init=(state, batch.x), xs=jnp.arange(5))
                 return state, loss_dict, metrics_dict
 
         custom_train = CustomTrain()

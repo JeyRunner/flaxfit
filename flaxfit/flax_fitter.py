@@ -40,12 +40,13 @@ class CallModuleFunction(Protocol):
         model: nnx.Module,
         batch_x,
         **model_call_kwargs
-    ) -> Any:
+    ) -> Any | tuple[Any, Any]:
         """
         Custom call to the module.
         This is a stateful function that will change the passed model.
         :param model: the model as merged nnx module, do calls to this module.
-        :return: the model predictions for the batch_x, that will be passed to the loss function
+        :return: (the model predictions for the batch_x that will be passed to the loss function,
+                    optional pytree that can be used by BatchProcessStepFunction as carry value coming from the model)
         """
 
 
@@ -108,6 +109,7 @@ class FlaxModelFitter(ModelFitter):
 
     def make_model_forward_fn(self, train_state: TrainStateFlax) -> ModelForwardFn:
         def forward(params, model_state, batch, model: nnx.Module = None, model_call_kwargs: dict = {}):
+            model_carry_out = None
             # recombine to model, do calls to model which changes the model state, split the model again into states
             if model is None:
                 model = nnx.merge(train_state.graphdef, params, model_state)
@@ -115,8 +117,10 @@ class FlaxModelFitter(ModelFitter):
                 prediction = model(batch)
             else:
                 prediction = self.call_model_function(model, batch, **model_call_kwargs)
+                if isinstance(prediction, tuple):
+                    prediction, model_carry_out = prediction
             model_graph_def, params, model_state_new = nnx.split(model, nnx.Param, filterlib.Everything())
-            return prediction, model_state_new
+            return prediction, model_state_new, model_carry_out
         return forward
 
 
@@ -156,7 +160,7 @@ class FlaxModelFitter(ModelFitter):
         :param model_state:
         :param model_forward_fn:
         :param batch:
-        :return: loss, (prediction, model_state, loss_dict, metrics)
+        :return: loss, (prediction, model_state, loss_dict, metrics, model_carry_out)
         """
         batch_non_flatted = batch
         if self.model_call_batch_converter is not None:
@@ -166,12 +170,12 @@ class FlaxModelFitter(ModelFitter):
 
         if model is None:
             # pass through model
-            prediction, model_state = model_forward_fn(
+            prediction, model_state, model_carry_out = model_forward_fn(
                 model_params, model_state, self.batch_to_model_input(batch), model_call_kwargs=model_call_kwargs
             )
         else:
             # pass through model nnx style
-            prediction, model_state = model_forward_fn(
+            prediction, model_state, model_carry_out = model_forward_fn(
                 # params, model_state, batch, model
                 params=None, model_state=None,
                 batch=self.batch_to_model_input(batch), model=model,
@@ -195,7 +199,7 @@ class FlaxModelFitter(ModelFitter):
         metrics = {}
         if self.metrics_function is not None:
             metrics = self.metrics_function(prediction, batch_non_flatted)
-        return loss, (prediction, model_state, loss_dict, metrics)
+        return loss, (prediction, model_state, loss_dict, metrics, model_carry_out)
 
 
 
@@ -217,7 +221,7 @@ class FlaxModelFitter(ModelFitter):
 
         # normal grad with normal jax model call
         if not use_nnx_grad:
-            (loss, (prediction, model_state, loss_dict, metrics)), grads = jax.value_and_grad(
+            (loss, (prediction, model_state, loss_dict, metrics, model_carry_out)), grads = jax.value_and_grad(
                 self._model_forward_and_loss, has_aux=True
             )(
                 state.train_state.params,
@@ -230,7 +234,7 @@ class FlaxModelFitter(ModelFitter):
             )
         else:
             model = state.train_state.as_model()
-            (loss, (prediction, __model_state, loss_dict, metrics)), grads = nnx.value_and_grad(
+            (loss, (prediction, __model_state, loss_dict, metrics, model_carry_out)), grads = nnx.value_and_grad(
                 self._model_forward_and_loss, has_aux=True, argnums=nnx.DiffState(5, filter=wrt)
             )(
                 None,  # params
@@ -254,4 +258,4 @@ class FlaxModelFitter(ModelFitter):
         state = state.replace(
             train_state=train_state, metrics_train=state.metrics_train.update(loss_dict, metrics)
         )
-        return state, loss, prediction
+        return state, loss_dict, metrics, model_carry_out

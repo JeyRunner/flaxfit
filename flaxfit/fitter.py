@@ -145,7 +145,7 @@ class ModelFitter:
                 self.model_call_batch_converter._batch_to_model_input(batch)
             )
         # pass through model
-        prediction, model_state = model_forward_fn(
+        prediction, model_state, model_carry_out = model_forward_fn(
             model_params, model_state, self.batch_to_model_input(batch), model_call_kwargs
         )
 
@@ -158,7 +158,7 @@ class ModelFitter:
         metrics = {}
         if self.metrics_function is not None:
             metrics = self.metrics_function(prediction, batch_non_flatted)
-        return loss, (prediction, model_state, loss_dict, metrics)
+        return loss, (prediction, model_state, loss_dict, metrics, model_carry_out)
 
 
     def train_update_step__one_model_grad_step(
@@ -172,7 +172,7 @@ class ModelFitter:
         Train for a single step given the input data x and labels y.
         :param ignore_last_n_elements_in_batch: exclude these last n elements from calculating the loss.
         """
-        (loss, (prediction, model_state, loss_dict, metrics)), grads = jax.value_and_grad(
+        (loss, (prediction, model_state, loss_dict, metrics, model_carry_out)), grads = jax.value_and_grad(
             self._model_forward_and_loss, has_aux=True
         )(
             state.train_state.params,
@@ -191,7 +191,7 @@ class ModelFitter:
         state = state.replace(
             train_state=train_state, metrics_train=state.metrics_train.update(loss_dict, metrics)
         )
-        return state, loss_dict, metrics
+        return state, loss_dict, metrics, model_carry_out
 
 
     def train_update_step(
@@ -453,7 +453,7 @@ class ModelFitter:
             batch = self.__apply_dataset_batch_converter_on_batch(batch, converter_key)
 
             def process_batch_and_update_state(state, batch, model_call_kwargs):
-                loss, (prediction, model_state, loss_dict, metrics) = self._model_forward_and_loss(
+                loss, (prediction, model_state, loss_dict, metrics, model_carry_out) = self._model_forward_and_loss(
                     state.train_state.params,
                     state.train_state.model_state,
                     model_forward_fn=self.make_model_forward_fn(state.train_state),
@@ -466,7 +466,7 @@ class ModelFitter:
                 # update the metrics
                 return state.replace(
                     metrics_eval=state.metrics_eval.update(loss_dict, metrics)
-                ), loss_dict, metrics
+                ), loss_dict, metrics, model_carry_out
 
             state, loss_dict, metrics_dict = self.batch_process_step(state, batch, process_batch_and_update_state)
             return (state, converter_key), None
@@ -530,7 +530,7 @@ class ModelFitter:
         """
         def forward(state, batch, model_call_kwargs):
             batch = self.__apply_dataset_batch_converter_on_batch(batch, rng=jax.random.PRNGKey(0))
-            (loss, (prediction, model_state, loss_dict, metrics)) = self._model_forward_and_loss(
+            (loss, (prediction, model_state, loss_dict, metrics, model_carry_out)) = self._model_forward_and_loss(
                 state.train_state.params,
                 state.train_state.model_state,
                 model_forward_fn=self.make_model_forward_fn(state.train_state),
@@ -540,7 +540,7 @@ class ModelFitter:
             )
             # check shapes
             chex.assert_tree_shape_prefix((loss_dict, metrics), ())
-            return state, loss_dict, metrics
+            return state, loss_dict, metrics, model_carry_out
 
         def fn(batch):
             nonlocal state

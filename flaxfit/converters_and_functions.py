@@ -178,9 +178,9 @@ class MetricsFunction(Protocol):
 
 class PassBatchThroughModelAndUpdateStateFn(Protocol):
     """Protocol for the function that processes a batch through the model and updates the state."""
-    def __call__(self, state: TrainStateWithMetrics, batch: Dataset, model_call_kwargs: Dict) -> Tuple[TrainStateWithMetrics, Dict, Dict]:
+    def __call__(self, state: TrainStateWithMetrics, batch: Dataset, model_call_kwargs: Dict) -> Tuple[TrainStateWithMetrics, Dict, Dict, jaxtyping.PyTree]:
         """
-        Given state, batch and model args. Return new state and loss and metric values.
+        Given state, batch and model args. Return new state and loss and metric values, also the second tuple value returned by the model.
         """
 
 class BatchProcessStepFunction(Protocol):
