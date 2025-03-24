@@ -75,6 +75,9 @@ class ModelFitter:
 
         self.__loss_function = loss_function
         self.metrics_function = metrics_function
+
+        if batch_process_step_function is None:
+            self.batch_process_step_function = BatchProcessStepFunctionDefault()
         self.batch_process_step_function = batch_process_step_function
 
 
