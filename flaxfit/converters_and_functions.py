@@ -201,10 +201,10 @@ class BatchProcessStepFunction(Protocol):
                     The metrics are updated by pass_batch_through_model_and_update_state_fn.
         """
         model_call_kwargs = {}
-        state = pass_batch_through_model_and_update_state_fn(
+        state, loss_dict, metrics_dict, model_carry_out = pass_batch_through_model_and_update_state_fn(
             state, batch, model_call_kwargs
         )
-        return state
+        return state, loss_dict, metrics_dict
 
 class BatchProcessStepFunctionDefault(BatchProcessStepFunction):
     pass

@@ -34,19 +34,24 @@ from flaxfit.train_state import (
 from flaxfit.train_state_flax import TrainStateFlax
 
 
+@flax.struct.dataclass
+class ModelOutputWithCarry:
+    model_out: jaxtyping.PyTree
+    carry: jaxtyping.PyTree
+
 class CallModuleFunction(Protocol):
     def __call__(
         self,
         model: nnx.Module,
         batch_x,
         **model_call_kwargs
-    ) -> Any | tuple[Any, Any]:
+    ) -> Any | ModelOutputWithCarry:
         """
         Custom call to the module.
         This is a stateful function that will change the passed model.
         :param model: the model as merged nnx module, do calls to this module.
         :return: (the model predictions for the batch_x that will be passed to the loss function,
-                    optional pytree that can be used by BatchProcessStepFunction as carry value coming from the model)
+                    optional pytree that can be used by BatchProcessStepFunction as carry value coming from the model as ModelOutputWithCarry)
         """
 
 
@@ -117,8 +122,8 @@ class FlaxModelFitter(ModelFitter):
                 prediction = model(batch)
             else:
                 prediction = self.call_model_function(model, batch, **model_call_kwargs)
-                if isinstance(prediction, tuple):
-                    prediction, model_carry_out = prediction
+                if isinstance(prediction, ModelOutputWithCarry):
+                    prediction, model_carry_out = prediction.model_out, prediction.carry
             model_graph_def, params, model_state_new = nnx.split(model, nnx.Param, filterlib.Everything())
             return prediction, model_state_new, model_carry_out
         return forward

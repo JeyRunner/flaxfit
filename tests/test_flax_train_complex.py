@@ -11,7 +11,7 @@ from flax import nnx
 from matplotlib import pyplot as plt
 from pyarrow.dataset import dataset
 
-from flaxfit.flax_fitter import FlaxModelFitter
+from flaxfit.flax_fitter import FlaxModelFitter, ModelOutputWithCarry
 from flaxfit.callbacks.checkpointer import CheckpointerCallback, load_train_state_from_checkpoint, \
     save_model_checkpoint, create_checkpointer
 from flaxfit.callbacks.trigger_every_n_steps import CallbackAtLeastEveryNEpochs
@@ -28,8 +28,9 @@ class TestFlaxTrainComplex(TestCase):
         class Model(nnx.Module):
             def __init__(self, rngs):
                 self.layers = nnx.Sequential(
-                    nnx.Linear(in_features=1, out_features=10, rngs=rngs),
-                    nnx.Linear(in_features=10, out_features=1, rngs=rngs),
+                    nnx.Linear(in_features=1, out_features=100, rngs=rngs),
+                    nnx.elu,
+                    nnx.Linear(in_features=100, out_features=1, rngs=rngs),
                 )
                 self.rng = rngs
 
@@ -66,10 +67,10 @@ class TestFlaxTrainComplex(TestCase):
                 jax.debug.print("info {}, batch_sub_update {}", info, batch_sub_update)
                 random = jax.random.normal(model.rng(), shape=batch_x.shape)
                 jax.debug.print("random {}", random[0, 0])
-                batch_x += random*0.05*batch_sub_update
+                batch_x += random*0.03*batch_sub_update
                 batch_x = (batch_x + last_model_in)/2.0
                 model_out = model(batch_x)
-                return model_out, batch_x
+                return ModelOutputWithCarry(model_out=model_out, carry=batch_x)
                 #return dict(new_loss=jnp.mean((model(batch_x) - batch_x**2)**2))
 
             def train_update_step(

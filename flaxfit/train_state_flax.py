@@ -71,12 +71,16 @@ class TrainStateFlax(TrainState):
     def model_state(self):
         return nnx.State.merge(self.model_state_without_rngs, self.rng_state)
 
-    def update_model_state(self, model_state: nnx.State):
+    def update_model_state(self, model_state: nnx.State, update_non_rng_state: bool = True):
         rng_state, model_state_without_rngs = model_state.split(nnx.RngState, filterlib.Everything())
-        return self.replace(
+        replace = dict(
             rng_state=rng_state,
-            model_state_without_rngs=model_state_without_rngs
         )
+        if update_non_rng_state:
+            replace |= dict(
+                model_state_without_rngs=model_state_without_rngs
+            )
+        return self.replace(**replace)
 
     def update_model_state_from_module(self, module: nnx.Module):
         """

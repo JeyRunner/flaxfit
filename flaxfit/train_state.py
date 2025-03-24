@@ -80,8 +80,9 @@ class TrainState(struct.PyTreeNode):
         raise NotImplemented()
 
 
-    def update_model_state(self, model_state: jaxtyping.PyTree):
+    def update_model_state(self, model_state: jaxtyping.PyTree, update_non_rng_state: bool = True):
         """Update the model state."""
+        assert update_non_rng_state, "Not implemented"
         return self.replace(model_state=model_state)
 
 

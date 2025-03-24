@@ -187,8 +187,7 @@ class ModelFitter:
         )
         train_state = state.train_state.apply_gradients(grads)
         # just update batchstats when the full batch is valid, otherwise the calculated batch stats are not accurate
-        if update_model_states:
-            train_state = train_state.update_model_state(model_state)
+        train_state = train_state.update_model_state(model_state, update_non_rng_state=update_model_states)
 
         # update the metrics
         state = state.replace(
@@ -464,7 +463,8 @@ class ModelFitter:
                     batch=self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
                     model_call_kwargs=model_call_kwargs
                 )
-                # do not update the model state
+                # do not update the model state (only the rngs states of the model)
+                state = state.replace(train_state=state.train_state.update_model_state(model_state, update_non_rng_state=False))
                 # just update the eval metrics
                 # update the metrics
                 return state.replace(
@@ -506,7 +506,7 @@ class ModelFitter:
                     self.model_call_batch_converter._batch_to_model_input(batch)
                 )
             # pass through model
-            prediction, model_state = model_forward_fn(
+            prediction, model_state, model_carry_out = model_forward_fn(
                 train_state.params, train_state.model_state, self.batch_to_model_input(batch)
             )
 
