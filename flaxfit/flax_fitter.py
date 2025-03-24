@@ -22,7 +22,7 @@ from flax.nnx import filterlib
 from jaxtyping import Integer, Array, Float
 
 from flaxfit.converters_and_functions import LossFunction, MetricsFunction, EpochBatchSplitter, ModelCallBatchConverter, \
-    DatasetBatchConverter
+    DatasetBatchConverter, BatchProcessStepFunction, BatchProcessStepFunctionDefault
 from flaxfit.dataset import Dataset
 from flaxfit.fitter import ModelFitter
 from flaxfit.train_state import (
@@ -39,6 +39,7 @@ class CallModuleFunction(Protocol):
         self,
         model: nnx.Module,
         batch_x,
+        **model_call_kwargs
     ) -> Any:
         """
         Custom call to the module.
@@ -57,7 +58,9 @@ class FlaxModelFitter(ModelFitter):
                  call_model_function: CallModuleFunction = None,
                  update_batch_size=256, evaluate_batch_size=None, model_call_batch_converter: ModelCallBatchConverter = None,
                  dataset_batch_converter: DatasetBatchConverter = None,
-                 epoch_batch_splitter: EpochBatchSplitter = None):
+                 epoch_batch_splitter: EpochBatchSplitter = None,
+                 batch_process_step_function: BatchProcessStepFunction = BatchProcessStepFunctionDefault(),
+                 ):
         """
         :param loss_function: returns the loss for a given batch and model output.
         :param metrics_function: returns the metrics for a given batch and model output.
@@ -66,10 +69,12 @@ class FlaxModelFitter(ModelFitter):
         :param model_call_batch_converter: converts batches within the model forward function, also used during inference.
         :param dataset_batch_converter: converts batches of the dataset used just during training (train and eval sets).
         :param epoch_batch_splitter:
+        :param batch_process_step_function: Defines how the model update(s) and evals are handled for each batch.
         """
         super().__init__(
             loss_function, metrics_function, update_batch_size, evaluate_batch_size, model_call_batch_converter,
-            dataset_batch_converter, epoch_batch_splitter
+            dataset_batch_converter, epoch_batch_splitter,
+            batch_process_step_function=batch_process_step_function
         )
         self.call_model_function = call_model_function
 
@@ -102,14 +107,14 @@ class FlaxModelFitter(ModelFitter):
         return model_from_train_state
 
     def make_model_forward_fn(self, train_state: TrainStateFlax) -> ModelForwardFn:
-        def forward(params, model_state, batch, model: nnx.Module = None):
+        def forward(params, model_state, batch, model: nnx.Module = None, model_call_kwargs: dict = {}):
             # recombine to model, do calls to model which changes the model state, split the model again into states
             if model is None:
                 model = nnx.merge(train_state.graphdef, params, model_state)
             if self.call_model_function is None:
                 prediction = model(batch)
             else:
-                prediction = self.call_model_function(model, batch)
+                prediction = self.call_model_function(model, batch, **model_call_kwargs)
             model_graph_def, params, model_state_new = nnx.split(model, nnx.Param, filterlib.Everything())
             return prediction, model_state_new
         return forward
@@ -141,7 +146,8 @@ class FlaxModelFitter(ModelFitter):
         model_forward_fn: ModelForwardFn,
         model_from_train_state_fn: ModelFromTrainStateFn,
         batch: Dataset,
-        model: nnx.Module = None
+        model: nnx.Module = None,
+        model_call_kwargs: dict = {}
     ):
         """
         Pass batch through the model and calculate loss and metrics.
@@ -161,14 +167,15 @@ class FlaxModelFitter(ModelFitter):
         if model is None:
             # pass through model
             prediction, model_state = model_forward_fn(
-                model_params, model_state, self.batch_to_model_input(batch)
+                model_params, model_state, self.batch_to_model_input(batch), model_call_kwargs=model_call_kwargs
             )
         else:
             # pass through model nnx style
             prediction, model_state = model_forward_fn(
                 # params, model_state, batch, model
                 params=None, model_state=None,
-                batch=self.batch_to_model_input(batch), model=model
+                batch=self.batch_to_model_input(batch), model=model,
+                model_call_kwargs=model_call_kwargs
             )
             # note that the model_state coming from model_forward_fn will not be used later
 
@@ -192,11 +199,12 @@ class FlaxModelFitter(ModelFitter):
 
 
 
-    def train_update_step(
+    def train_update_step__one_model_grad_step(
         self,
         state: TrainStateWithMetrics,
         batch: Dataset,
         update_model_states=True,
+        model_call_kwargs: dict = {}
     ):
         """
         Train for a single step given the input data x and labels y.
@@ -217,6 +225,8 @@ class FlaxModelFitter(ModelFitter):
                 self.make_model_forward_fn(state.train_state),
                 self.make_model_from_train_state_fn(state.train_state),
                 batch,
+                None,
+                model_call_kwargs
             )
         else:
             model = state.train_state.as_model()
@@ -228,7 +238,8 @@ class FlaxModelFitter(ModelFitter):
                 self.make_model_forward_fn(None),
                 None,  # make_model_from_train_state_fn
                 batch,
-                model
+                model,
+                model_call_kwargs
             )
             model_graph_def, params, model_state = nnx.split(model, nnx.Param, filterlib.Everything())
 

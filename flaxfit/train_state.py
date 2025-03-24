@@ -16,7 +16,8 @@ class ModelForwardFn:
         params: jaxtyping.PyTree,
         model_state: jaxtyping.PyTree,
         batch: jaxtyping.PyTree,
-        model: Any = None
+        model: Any = None,
+        model_call_kwargs: dict = None
     ) -> tuple[jaxtyping.PyTree, jaxtyping.PyTree]:
         """
         Pass a batch through the model given its parameters and state.
@@ -163,3 +164,7 @@ class TrainStateWithMetrics(struct.PyTreeNode):
     train_state: TrainState
     metrics_train: MetricsWithLoss
     metrics_eval: MetricsWithLoss
+
+    # carry custom info values over train iterations
+    # allways part of this is epoch and num_total_epochs
+    info: dict = flax.struct.field(default_factory=lambda: {})

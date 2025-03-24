@@ -25,7 +25,8 @@ from jaxtyping import Integer, Array, Float
 
 from flaxfit.callbacks.call_sub_args import call_fn_just_with_defined_args
 from flaxfit.converters_and_functions import LossFunction, MetricsFunction, ModelCallBatchConverter, EpochBatchSplitter, \
-    LossEntry, EpochCallbackFunction, DatasetAndModelPredictions, DatasetBatchConverter
+    LossEntry, EpochCallbackFunction, DatasetAndModelPredictions, DatasetBatchConverter, BatchProcessStepFunction, \
+    BatchProcessStepFunctionDefault, PassBatchThroughModelAndUpdateStateFn
 from flaxfit.dataset import Dataset, DatasetTyped
 from flaxfit.logger.util import squeeze_to_scalar
 from flaxfit.train_state import (
@@ -51,6 +52,7 @@ class ModelFitter:
         model_call_batch_converter: ModelCallBatchConverter = None,
         dataset_batch_converter: DatasetBatchConverter = None,
         epoch_batch_splitter: EpochBatchSplitter = None,
+        batch_process_step_function: BatchProcessStepFunction = BatchProcessStepFunctionDefault(),
     ):
         """
         :param loss_function: returns the loss for a given batch and model output.
@@ -73,6 +75,7 @@ class ModelFitter:
 
         self.__loss_function = loss_function
         self.metrics_function = metrics_function
+        self.batch_process_step_function = batch_process_step_function
 
 
     def loss_function(self, predictions_y, dataset: Dataset, model):
@@ -126,6 +129,7 @@ class ModelFitter:
         model_forward_fn: ModelForwardFn,
         model_from_train_state_fn: ModelFromTrainStateFn,
         batch: Dataset,
+        model_call_kwargs: dict = {}
     ):
         """
         Pass batch through the model and calculate loss and metrics
@@ -142,7 +146,7 @@ class ModelFitter:
             )
         # pass through model
         prediction, model_state = model_forward_fn(
-            model_params, model_state, self.batch_to_model_input(batch)
+            model_params, model_state, self.batch_to_model_input(batch), model_call_kwargs
         )
 
         if self.model_call_batch_converter is not None:
@@ -157,11 +161,12 @@ class ModelFitter:
         return loss, (prediction, model_state, loss_dict, metrics)
 
 
-    def train_update_step(
+    def train_update_step__one_model_grad_step(
         self,
         state: TrainStateWithMetrics,
         batch: Dataset,
         update_model_states=True,
+        model_call_kwargs: dict = None,
     ):
         """
         Train for a single step given the input data x and labels y.
@@ -175,6 +180,7 @@ class ModelFitter:
             self.make_model_forward_fn(state.train_state),
             self.make_model_from_train_state_fn(state.train_state),
             batch,
+            model_call_kwargs
         )
         train_state = state.train_state.apply_gradients(grads)
         # just update batchstats when the full batch is valid, otherwise the calculated batch stats are not accurate
@@ -185,7 +191,51 @@ class ModelFitter:
         state = state.replace(
             train_state=train_state, metrics_train=state.metrics_train.update(loss_dict, metrics)
         )
-        return state, loss, prediction
+        return state, loss_dict, metrics
+
+
+    def train_update_step(
+        self,
+        state: TrainStateWithMetrics,
+        batch: Dataset,
+        update_model_states=True
+    ):
+        """
+        Train for a single step given (or multiple) the input data x and labels y.
+        The function should internally call train_update_step__one_model_grad_step one or multiple times
+        :param update_model_states: enable updates for all model states except the params (params are allays updated).
+        """
+        def pass_batch_through_model_and_update_state_fn(state: TrainStateWithMetrics, batch: Dataset, model_call_kwargs: Dict):
+            return self.train_update_step__one_model_grad_step(
+                state, batch, model_call_kwargs=model_call_kwargs, update_model_states=update_model_states
+            )
+        state, loss_dict, metrics_dict = self.batch_process_step(
+            state, batch, pass_batch_through_model_and_update_state_fn=pass_batch_through_model_and_update_state_fn
+        )
+        return state
+
+
+    def batch_process_step(
+        self,
+        state: TrainStateWithMetrics,
+        batch: Dataset,
+        pass_batch_through_model_and_update_state_fn: PassBatchThroughModelAndUpdateStateFn
+    ) -> tuple[TrainStateWithMetrics, dict, dict]:
+        """
+        This function is used for doing one train batch update or one evaluation of the given batch.
+        The function inner_batch_process_fn is called to change the batch based on the batch (either update model params or just eval metrics).
+        Train/Evaluate for a single step given (or multiple) the input data x and labels y.
+        The function should internally call pass_batch_through_model_and_update_state_fn one or multiple times.
+        :param update_model_states: enable updates for all model states except the params (params are allays updated).
+        :return: (new state, loss_dict, metrics_dict) Note that the value of loss_dict, metrics_dict are not used.
+                    Just their pytree structure is used to infer the initial loss and metrics keys/values types (thus the shape also does not matter).
+                    The metrics are updated by pass_batch_through_model_and_update_state_fn.
+        """
+        state, loss_dict, metrics_dict = self.batch_process_step_function(
+            state, batch, pass_batch_through_model_and_update_state_fn
+        )
+        return state, loss_dict, metrics_dict
+
 
 
     def __apply_dataset_batch_converter_on_batch(self, batch, rng):
@@ -239,7 +289,7 @@ class ModelFitter:
                 )
                 batch = pytree_sub_index_each_leaf(dataset, batch_idx)
                 # train on batch:
-                state, loss, prediction = self.train_update_step(
+                state = self.train_update_step(
                     state, self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
                     update_model_states=True
                 )
@@ -291,11 +341,11 @@ class ModelFitter:
             state, converter_key = carry
             converter_key, _ = jax.random.split(converter_key)
             # train on batch:
-            state, loss, prediction = self.train_update_step(
+            state = self.train_update_step(
                 state, self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
                 update_model_states=update_model_states
             )
-            return (state, converter_key), prediction
+            return (state, converter_key), None
 
         (state, rng), predictions = jax.lax.scan(
             train_update_step, init=(state, rng), xs=dataset_batched
@@ -316,15 +366,15 @@ class ModelFitter:
 
         # recombine predictions from all batches
         # not needed anymore since we are not returning predictions
-        predictions = pytree_combine_batches(
-            predictions, batch_remainder=predictions_extra_last_batch
-        )
-
-        # reconstruct order before shuffle, currently unused
-        if shuffle and self.epoch_batch_splitter is None and batch_remainder_strategy != 'PadValidSampled':
-            predictions = jax.tree_util.tree_map(
-                lambda x: x.at[dataset_randomized_order].set(x), predictions
-            )
+        # predictions = pytree_combine_batches(
+        #     predictions, batch_remainder=predictions_extra_last_batch
+        # )
+        #
+        # # reconstruct order before shuffle, currently unused
+        # if shuffle and self.epoch_batch_splitter is None and batch_remainder_strategy != 'PadValidSampled':
+        #     predictions = jax.tree_util.tree_map(
+        #         lambda x: x.at[dataset_randomized_order].set(x), predictions
+        #     )
         return state
 
 
@@ -371,6 +421,7 @@ class ModelFitter:
                 sample_each_batch_independent_from_dataset=sample_each_batch_independent_from_dataset,
                 rng=rng_shuffle_dataset
             )
+            state = state.replace(info=state.info | dict(epoch=state.info['epoch']+1))
             return (state, rng), None
 
         # loop over training epochs
@@ -399,19 +450,25 @@ class ModelFitter:
             state: TrainStateWithMetrics
             state, converter_key = carry
             converter_key, _ = jax.random.split(converter_key)
-            loss, (prediction, model_state, loss_dict, metrics) = self._model_forward_and_loss(
-                state.train_state.params,
-                state.train_state.model_state,
-                model_forward_fn=self.make_model_forward_fn(state.train_state),
-                model_from_train_state_fn=self.make_model_from_train_state_fn(state.train_state),
-                batch=self.__apply_dataset_batch_converter_on_batch(batch, converter_key)
-            )
-            # do not update the model state
-            # just update the eval metrics
-            # update the metrics
-            state = state.replace(
-                metrics_eval=state.metrics_eval.update(loss_dict, metrics)
-            )
+            batch = self.__apply_dataset_batch_converter_on_batch(batch, converter_key)
+
+            def process_batch_and_update_state(state, batch, model_call_kwargs):
+                loss, (prediction, model_state, loss_dict, metrics) = self._model_forward_and_loss(
+                    state.train_state.params,
+                    state.train_state.model_state,
+                    model_forward_fn=self.make_model_forward_fn(state.train_state),
+                    model_from_train_state_fn=self.make_model_from_train_state_fn(state.train_state),
+                    batch=self.__apply_dataset_batch_converter_on_batch(batch, converter_key),
+                    model_call_kwargs=model_call_kwargs
+                )
+                # do not update the model state
+                # just update the eval metrics
+                # update the metrics
+                return state.replace(
+                    metrics_eval=state.metrics_eval.update(loss_dict, metrics)
+                ), loss_dict, metrics
+
+            state, loss_dict, metrics_dict = self.batch_process_step(state, batch, process_batch_and_update_state)
             return (state, converter_key), None
 
         (state, _), _ = batchix.vmap_scan.scan_batched(
@@ -467,21 +524,33 @@ class ModelFitter:
         return train_state, predictions, dataset_converted_to_model_input
 
 
-    def __dummy_forward_get_initial_metrics(self, train_state, dummy_dataset) -> tuple[MetricsWithLoss, MetricsWithLoss]:
+    def __dummy_forward_get_initial_metrics(self, state: TrainStateWithMetrics, dummy_dataset) -> tuple[MetricsWithLoss, MetricsWithLoss]:
         """
         Create the initial train and eval metrics by dummy calling the loss and metrics functions.
         """
-        def forward(batch):
+        def forward(state, batch, model_call_kwargs):
             batch = self.__apply_dataset_batch_converter_on_batch(batch, rng=jax.random.PRNGKey(0))
             (loss, (prediction, model_state, loss_dict, metrics)) = self._model_forward_and_loss(
-                train_state.params,
-                train_state.model_state,
-                model_forward_fn=self.make_model_forward_fn(train_state),
-                model_from_train_state_fn=self.make_model_from_train_state_fn(train_state),
+                state.train_state.params,
+                state.train_state.model_state,
+                model_forward_fn=self.make_model_forward_fn(state.train_state),
+                model_from_train_state_fn=self.make_model_from_train_state_fn(state.train_state),
                 batch=batch,
+                model_call_kwargs=model_call_kwargs
             )
-            return loss_dict, metrics
-        loss_dict, metrics = jax.eval_shape(forward, pytree_sub_index_each_leaf(dummy_dataset, jnp.s_[:1]))
+            # check shapes
+            chex.assert_tree_shape_prefix((loss_dict, metrics), ())
+            return state, loss_dict, metrics
+
+        def fn(batch):
+            nonlocal state
+            state, loss_dict, metrics_dict = self.batch_process_step(state, batch, pass_batch_through_model_and_update_state_fn=forward)
+            # need to map dict values to scalars (inside batch_process_step there may be a scan, etc.)
+            # later the dict values are not used for anything, just here to get the loss and metrics dict structure
+            loss_dict, metrics_dict = jax.tree_util.tree_map(lambda el: jnp.zeros((), dtype=el.dtype), (loss_dict, metrics_dict))
+            return loss_dict, metrics_dict
+
+        loss_dict, metrics = jax.eval_shape(fn, pytree_sub_index_each_leaf(dummy_dataset, jnp.s_[:1]))
         assert isinstance(metrics, dict), \
             "current just a dictionary is supported as output from the metrics function (will calc avg value)"
         metrics_train = MetricsWithLoss(
@@ -545,11 +614,23 @@ class ModelFitter:
         num_eval_steps = int(math.ceil(num_epochs / evaluate_each_n_epochs))
 
         # make initial state with metrics
-        metrics_train, metrics_eval = self.__dummy_forward_get_initial_metrics(initial_train_state, dataset)
+        state_info = dict(
+            epoch=0,
+            num_total_epochs=num_epochs
+        )
+        # first dummy state to get metrics structure
+        dummy_state = TrainStateWithMetrics(
+            train_state=initial_train_state,
+            metrics_train=None,
+            metrics_eval=None,
+            info=state_info
+        )
+        metrics_train, metrics_eval = self.__dummy_forward_get_initial_metrics(dummy_state, dataset)
         state = TrainStateWithMetrics(
             train_state=initial_train_state,
             metrics_train=metrics_train,
-            metrics_eval=metrics_eval
+            metrics_eval=metrics_eval,
+            info=state_info
         )
 
         # init metrics over epochs

@@ -1,5 +1,5 @@
 import math
-from typing import Protocol, Union, Literal, Any, Optional
+from typing import Protocol, Union, Literal, Any, Optional, Callable, Dict, Tuple
 
 import chex
 import jax
@@ -176,3 +176,35 @@ class MetricsFunction(Protocol):
 
 
 
+class PassBatchThroughModelAndUpdateStateFn(Protocol):
+    """Protocol for the function that processes a batch through the model and updates the state."""
+    def __call__(self, state: TrainStateWithMetrics, batch: Dataset, model_call_kwargs: Dict) -> Tuple[TrainStateWithMetrics, Dict, Dict]:
+        """
+        Given state, batch and model args. Return new state and loss and metric values.
+        """
+
+class BatchProcessStepFunction(Protocol):
+    def __call__(
+        self,
+        state: TrainStateWithMetrics,
+        batch: Dataset,
+        pass_batch_through_model_and_update_state_fn: PassBatchThroughModelAndUpdateStateFn
+    ) -> tuple[TrainStateWithMetrics, dict, dict]:
+        """
+        This function is used for doing one train batch update or one evaluation of the given batch.
+        The function inner_batch_process_fn is called to change the batch based on the batch (either update model params or just eval metrics).
+        Train/Evaluate for a single step given (or multiple) the input data x and labels y.
+        The function should internally call pass_batch_through_model_and_update_state_fn one or multiple times.
+        :param update_model_states: enable updates for all model states except the params (params are allays updated).
+        :return: (new state, loss_dict, metrics_dict) Note that the value of loss_dict, metrics_dict are not used.
+                    Just their pytree structure is used to infer the initial loss and metrics keys/values types (thus the shape also does not matter).
+                    The metrics are updated by pass_batch_through_model_and_update_state_fn.
+        """
+        model_call_kwargs = {}
+        state = pass_batch_through_model_and_update_state_fn(
+            state, batch, model_call_kwargs
+        )
+        return state
+
+class BatchProcessStepFunctionDefault(BatchProcessStepFunction):
+    pass
