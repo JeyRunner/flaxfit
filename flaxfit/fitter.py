@@ -76,9 +76,10 @@ class ModelFitter:
         self.__loss_function = loss_function
         self.metrics_function = metrics_function
 
-        if batch_process_step_function is None:
-            self.batch_process_step_function = BatchProcessStepFunctionDefault()
+
         self.batch_process_step_function = batch_process_step_function
+        if self.batch_process_step_function is None:
+            self.batch_process_step_function = BatchProcessStepFunctionDefault()
 
 
     def loss_function(self, predictions_y, dataset: Dataset, model):
