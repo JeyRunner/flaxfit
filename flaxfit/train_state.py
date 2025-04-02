@@ -166,6 +166,13 @@ class TrainStateWithMetrics(struct.PyTreeNode):
     metrics_train: MetricsWithLoss
     metrics_eval: MetricsWithLoss
 
-    # carry custom info values over train iterations
-    # allways part of this is epoch and num_total_epochs
+    metrics_train_epoch: dict = flax.struct.field(default_factory=lambda: {})
+    """
+    Optional dict with scalar values use for logging. Will be updated after each epoch.
+    Does not do averageing as metrics_train.
+    """
+
     info: dict = flax.struct.field(default_factory=lambda: {})
+    """
+    Carry custom info values over train iterations. Allways part of this is 'epoch' and 'num_total_epochs'.
+    """

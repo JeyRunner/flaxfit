@@ -28,6 +28,7 @@ from flaxfit.converters_and_functions import LossFunction, MetricsFunction, Mode
     LossEntry, EpochCallbackFunction, DatasetAndModelPredictions, DatasetBatchConverter, BatchProcessStepFunction, \
     BatchProcessStepFunctionDefault, PassBatchThroughModelAndUpdateStateFn
 from flaxfit.dataset import Dataset, DatasetTyped
+from flaxfit.flax_fitter_building_blocks import get_loss_sum_and_dict_from_loss_terms
 from flaxfit.logger.util import squeeze_to_scalar
 from flaxfit.train_state import (
     TrainStateWithMetrics,
@@ -106,26 +107,6 @@ class ModelFitter:
         raise NotImplementedError()
 
 
-    def _get_loss_sum_and_dict_from_loss(self, loss_fn_output):
-        loss_dict = {}
-        if isinstance(loss_fn_output, dict):
-            loss_sum = 0.0
-            for key, value in loss_fn_output.items():
-                if isinstance(value, LossEntry):
-                    loss_value = squeeze_to_scalar(value.value)
-                    loss_sum += value.weight * loss_value
-                    loss_dict[key] = loss_value
-                else:
-                    loss_value = squeeze_to_scalar(value)
-                    loss_sum += loss_value
-                    loss_dict[key] = loss_value
-        else:
-            loss_sum = squeeze_to_scalar(loss_fn_output)
-        # include loss sum in loss dict for metrics
-        loss_dict['total'] = loss_sum
-        return loss_sum, loss_dict
-
-
     def _model_forward_and_loss(
         self,
         model_params: jaxtyping.PyTree,
@@ -158,7 +139,7 @@ class ModelFitter:
                 batch_unflatten_shape, prediction
             )
         loss = self.loss_function(prediction, batch_non_flatted, model_from_train_state_fn(model_params, model_state))
-        loss, loss_dict = self._get_loss_sum_and_dict_from_loss(loss)
+        loss, loss_dict = get_loss_sum_and_dict_from_loss_terms(loss)
         metrics = {}
         if self.metrics_function is not None:
             metrics = self.metrics_function(prediction, batch_non_flatted)

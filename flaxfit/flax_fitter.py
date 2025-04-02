@@ -25,6 +25,7 @@ from flaxfit.converters_and_functions import LossFunction, MetricsFunction, Epoc
     DatasetBatchConverter, BatchProcessStepFunction, BatchProcessStepFunctionDefault
 from flaxfit.dataset import Dataset
 from flaxfit.fitter import ModelFitter
+from flaxfit.flax_fitter_building_blocks import get_loss_sum_and_dict_from_loss_terms
 from flaxfit.train_state import (
     TrainStateWithMetrics,
     Metric,
@@ -200,7 +201,7 @@ class FlaxModelFitter(ModelFitter):
             model_after_forward = model
 
         loss = self.loss_function(prediction, batch_non_flatted, model_after_forward)
-        loss, loss_dict = self._get_loss_sum_and_dict_from_loss(loss)
+        loss, loss_dict = get_loss_sum_and_dict_from_loss_terms(loss)
         metrics = {}
         if self.metrics_function is not None:
             metrics = self.metrics_function(prediction, batch_non_flatted)

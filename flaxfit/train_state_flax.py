@@ -45,7 +45,7 @@ class TrainStateFlax(TrainState):
             model_state_without_rngs=model_state_without_rngs,
             wrt=wrt
         )
-        if opt_state is None:
+        if opt_state is None and tx is not None:
             opt_state = tx.init(nnx.state(train_state.as_model(), wrt))
             train_state = train_state.replace(opt_state=opt_state)
         return train_state
