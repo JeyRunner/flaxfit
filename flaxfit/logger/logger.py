@@ -96,6 +96,16 @@ class AbstractLogger:
 			self.wandb_run.config.update(hyper_params)
 
 
+	def add_metrics(self, *metrics: str):
+		"""Add metrics."""
+		if self.config.use_tensorboard:
+			self.tb_writer_metric_dict = {name: np.nan for name in metrics}
+			self.tb_writer.add_hparams(hparam_dict={}, metric_dict=self.tb_writer_metric_dict, name='_hparams')
+		if self.config.use_wandb:
+			for metric_name in metrics:
+				wandb.define_metric(metric_name)
+
+
 
 	def log_scalars(self, values: dict, step: int, filter_out_prefixes: list[str] = ['__'], print_values: bool = True):
 		"""
@@ -174,6 +184,25 @@ class AbstractLogger:
 		if self.wandb_run is not None:
 			self.wandb_run.log({tag: wandb.Image(image)}, step=step, commit=False)
 
+
+	def log_video(self, tag: str, data_or_path: np.ndarray | str, fps: int,step: int):
+		"""
+		Log single video (not suppored for tensorboard)
+		:param tag:
+		:param image:
+		:param step:
+		:param parent_folder:
+		:return:
+		"""
+		if self.tb_writer is not None:
+			pass
+
+		if self.wandb_run is not None:
+			self.wandb_run.log({
+					tag: wandb.Video(data_or_path, fps=fps, format='mp4')
+				},
+				step=current_step, commit=False
+			)
 
 	def commit(self, step):
 		"""

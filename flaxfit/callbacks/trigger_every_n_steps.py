@@ -8,10 +8,11 @@ class EveryNSteps:
 
   last_step: int
 
-  def __init__(self, every_n: int | None, trigger_at_step_zero: bool = False):
+  def __init__(self, every_n: int | None, trigger_at_step_zero: bool = False, ignore_negative_step_value=True):
     self.every_n = every_n
     self.trigger_at_step_zero = trigger_at_step_zero
     self.last_step = 0
+    self.ignore_negative_step_value = ignore_negative_step_value
 
   def reset(self):
     self.last_step = 0
@@ -22,6 +23,8 @@ class EveryNSteps:
     :param step: the step to check.
     :return: if at least every_n steps are over.
     """
+    if self.ignore_negative_step_value and step < 0:
+      return
     if step < self.last_step:
       self.last_step = step
 

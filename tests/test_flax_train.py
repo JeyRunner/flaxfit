@@ -205,4 +205,5 @@ class TestFlaxTrain(TestCase):
             evaluation_mode=True,
             step=1
         )
+        print(train_state)
 

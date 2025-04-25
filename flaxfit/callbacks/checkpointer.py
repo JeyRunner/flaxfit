@@ -39,6 +39,7 @@ def load_train_state_from_checkpoint(
     train_state_init: TrainStateFlax,
     step: int | None = None,
     evaluation_mode=False,
+    load_opt_state: bool = True
 ) -> TrainStateFlax:
     """
     Will return the train state loaded from the checkpoint.
@@ -56,6 +57,11 @@ def load_train_state_from_checkpoint(
       step = checkpointing.latest_step()
       assert step is not None, f"latest checkpoint of model {path} not found"
       print(f'> use latest checkpoint of model: {step}')
+
+    # not restore opt state, but just set to None
+    if not load_opt_state:
+      train_state = train_state.replace(opt_state=None, tx=None)
+
     # not restore the rng state
     train_state: TrainStateFlax = checkpointing.restore(step, args=ocp.args.StandardRestore(
       train_state.replace(rng_state=None)
