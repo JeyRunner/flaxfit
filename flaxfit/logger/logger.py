@@ -185,7 +185,7 @@ class AbstractLogger:
 			self.wandb_run.log({tag: wandb.Image(image)}, step=step, commit=False)
 
 
-	def log_video(self, tag: str, data_or_path: np.ndarray | str, fps: int,step: int):
+	def log_video(self, tag: str, data_or_path: np.ndarray | str, fps: int, step: int):
 		"""
 		Log single video (not suppored for tensorboard)
 		:param tag:
@@ -201,7 +201,7 @@ class AbstractLogger:
 			self.wandb_run.log({
 					tag: wandb.Video(data_or_path, fps=fps, format='mp4')
 				},
-				step=current_step, commit=False
+				step=step, commit=False
 			)
 
 	def commit(self, step):
